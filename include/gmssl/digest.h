@@ -1,17 +1,49 @@
-﻿/* 
- *   Copyright 2014-2021 The GmSSL Project Authors. All Rights Reserved.
+/*
+ * Copyright (c) 2021 - 2021 The GmSSL Project.  All rights reserved.
  *
- *   Licensed under the Apache License, Version 2.0 (the "License");
- *   you may not use this file except in compliance with the License.
- *   You may obtain a copy of the License at
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
  *
- *       http://www.apache.org/licenses/LICENSE-2.0
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
  *
- *   Unless required by applicable law or agreed to in writing, software
- *   distributed under the License is distributed on an "AS IS" BASIS,
- *   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- *   See the License for the specific language governing permissions and
- *   limitations under the License.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in
+ *    the documentation and/or other materials provided with the
+ *    distribution.
+ *
+ * 3. All advertising materials mentioning features or use of this
+ *    software must display the following acknowledgment:
+ *    "This product includes software developed by the GmSSL Project.
+ *    (http://gmssl.org/)"
+ *
+ * 4. The name "GmSSL Project" must not be used to endorse or promote
+ *    products derived from this software without prior written
+ *    permission. For written permission, please contact
+ *    guanzhi1980@gmail.com.
+ *
+ * 5. Products derived from this software may not be called "GmSSL"
+ *    nor may "GmSSL" appear in their names without prior written
+ *    permission of the GmSSL Project.
+ *
+ * 6. Redistributions of any form whatsoever must retain the following
+ *    acknowledgment:
+ *    "This product includes software developed by the GmSSL Project
+ *    (http://gmssl.org/)"
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE GmSSL PROJECT ``AS IS'' AND ANY
+ * EXPRESSED OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE GmSSL PROJECT OR
+ * ITS CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+ * NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+ * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
+ * OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
 
@@ -32,16 +64,15 @@ extern "C" {
 #endif
 
 
-typedef struct digest_st DIGEST;
-typedef struct digest_ctx_st DIGEST_CTX;
+typedef struct DIGEST DIGEST;
+typedef struct DIGEST_CTX DIGEST_CTX;
 
 
 #define DIGEST_MAX_SIZE		64
 #define DIGEST_MAX_BLOCK_SIZE (1024/8)
 
 
-struct digest_ctx_st {
-	const DIGEST *digest;
+struct DIGEST_CTX {
 	union {
 		SM3_CTX sm3_ctx;
 		MD5_CTX md5_ctx;
@@ -51,22 +82,18 @@ struct digest_ctx_st {
 		SHA384_CTX sha384_ctx;
 		SHA512_CTX sha512_ctx;
 	} u;
+	const DIGEST *digest;
 };
 
-struct digest_st {
-	int nid;
+struct DIGEST {
+	int oid;
 	size_t digest_size;
 	size_t block_size;
 	size_t ctx_size;
 	int (*init)(DIGEST_CTX *ctx);
-	int (*update)(DIGEST_CTX *ctx, const unsigned char *data, size_t datalen);
-	int (*finish)(DIGEST_CTX *ctx, unsigned char *dgst);
+	int (*update)(DIGEST_CTX *ctx, const uint8_t *data, size_t datalen);
+	int (*finish)(DIGEST_CTX *ctx, uint8_t *dgst);
 };
-
-int digest_nid(const DIGEST *digest);
-const char *digest_name(const DIGEST *digest);
-size_t digest_size(const DIGEST *digest);
-size_t digest_block_size(const DIGEST *digest);
 
 const DIGEST *DIGEST_sm3(void);
 const DIGEST *DIGEST_md5(void);
@@ -79,26 +106,12 @@ const DIGEST *DIGEST_sha512_224(void);
 const DIGEST *DIGEST_sha512_256(void);
 
 const DIGEST *digest_from_name(const char *name);
-
-int digest_ctx_nid(const DIGEST_CTX *ctx);
-const char *digest_ctx_name(const DIGEST_CTX *ctx);
-size_t digest_ctx_size(const DIGEST_CTX *ctx);
-size_t digest_ctx_block_size(const DIGEST_CTX *ctx);
-const DIGEST *digest_ctx_digest(const DIGEST_CTX *ctx);
-
-int digest_ctx_init(DIGEST_CTX *ctx);
+const char *digest_name(const DIGEST *digest);
 int digest_init(DIGEST_CTX *ctx, const DIGEST *algor);
-int digest_update(DIGEST_CTX *ctx, const unsigned char *data, size_t datalen);
-int digest_finish(DIGEST_CTX *ctx, unsigned char *dgst, size_t *dgstlen);
-void digest_ctx_cleanup(DIGEST_CTX *ctx);
+int digest_update(DIGEST_CTX *ctx, const uint8_t *data, size_t datalen);
+int digest_finish(DIGEST_CTX *ctx, uint8_t *dgst, size_t *dgstlen);
+int digest(const DIGEST *digest, const uint8_t *data, size_t datalen, uint8_t *dgst, size_t *dgstlen);
 
-int digest(const DIGEST *digest, const unsigned char *data, size_t datalen,
-	unsigned char *dgst, size_t *dgstlen);
-
-const char *digest_algor_name(int oid);
-int digest_algor_to_der(int oid, uint8_t **out, size_t *outlen);
-int digest_algor_from_der(int *oid, uint32_t *nodes, size_t *nodes_count,
-	const uint8_t **in, size_t *inlen);
 
 #ifdef __cplusplus
 }

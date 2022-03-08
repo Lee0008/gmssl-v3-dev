@@ -1,17 +1,49 @@
-﻿/* 
- *   Copyright 2014-2021 The GmSSL Project Authors. All Rights Reserved.
+﻿/*
+ * Copyright (c) 2015 - 2021 The GmSSL Project.  All rights reserved.
  *
- *   Licensed under the Apache License, Version 2.0 (the "License");
- *   you may not use this file except in compliance with the License.
- *   You may obtain a copy of the License at
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
  *
- *       http://www.apache.org/licenses/LICENSE-2.0
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
  *
- *   Unless required by applicable law or agreed to in writing, software
- *   distributed under the License is distributed on an "AS IS" BASIS,
- *   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- *   See the License for the specific language governing permissions and
- *   limitations under the License.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in
+ *    the documentation and/or other materials provided with the
+ *    distribution.
+ *
+ * 3. All advertising materials mentioning features or use of this
+ *    software must display the following acknowledgment:
+ *    "This product includes software developed by the GmSSL Project.
+ *    (http://gmssl.org/)"
+ *
+ * 4. The name "GmSSL Project" must not be used to endorse or promote
+ *    products derived from this software without prior written
+ *    permission. For written permission, please contact
+ *    guanzhi1980@gmail.com.
+ *
+ * 5. Products derived from this software may not be called "GmSSL"
+ *    nor may "GmSSL" appear in their names without prior written
+ *    permission of the GmSSL Project.
+ *
+ * 6. Redistributions of any form whatsoever must retain the following
+ *    acknowledgment:
+ *    "This product includes software developed by the GmSSL Project
+ *    (http://gmssl.org/)"
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE GmSSL PROJECT ``AS IS'' AND ANY
+ * EXPRESSED OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE GmSSL PROJECT OR
+ * ITS CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+ * NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+ * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
+ * OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
 #include <stdlib.h>
@@ -150,7 +182,7 @@ static const uint8_t S1[256] = {
 	(X0 ^ R1) + R2;					\
 	F_(X1, X2)
 
-void zuc_set_key(ZUC_KEY *key, const unsigned char *user_key, const unsigned char *iv)
+void zuc_init(ZUC_STATE *key, const uint8_t *user_key, const uint8_t *iv)
 {
 	ZUC_UINT31 *LFSR = key->LFSR;
 	uint32_t R1, R2;
@@ -179,7 +211,7 @@ void zuc_set_key(ZUC_KEY *key, const unsigned char *user_key, const unsigned cha
 	key->R2 = R2;
 }
 
-uint32_t zuc_generate_keyword(ZUC_KEY *key)
+uint32_t zuc_generate_keyword(ZUC_STATE *key)
 {
 	ZUC_UINT31 *LFSR = key->LFSR;
 	uint32_t R1 = key->R1;
@@ -198,7 +230,7 @@ uint32_t zuc_generate_keyword(ZUC_KEY *key)
 	return Z;
 }
 
-void zuc_generate_keystream(ZUC_KEY *key, size_t nwords, uint32_t *keystream)
+void zuc_generate_keystream(ZUC_STATE *key, size_t nwords, uint32_t *keystream)
 {
 	ZUC_UINT31 *LFSR = key->LFSR;
 	uint32_t R1 = key->R1;
@@ -217,14 +249,14 @@ void zuc_generate_keystream(ZUC_KEY *key, size_t nwords, uint32_t *keystream)
 	key->R2 = R2;
 }
 
-void zuc_mac_init(ZUC_MAC_CTX *ctx, const unsigned char key[16], const unsigned char iv[16])
+void zuc_mac_init(ZUC_MAC_CTX *ctx, const uint8_t key[16], const uint8_t iv[16])
 {
 	memset(ctx, 0, sizeof(*ctx));
-	zuc_set_key((ZUC_KEY *)ctx, key, iv);
-	ctx->K0 = zuc_generate_keyword((ZUC_KEY *)ctx);
+	zuc_init((ZUC_STATE *)ctx, key, iv);
+	ctx->K0 = zuc_generate_keyword((ZUC_STATE *)ctx);
 }
 
-void zuc_mac_update(ZUC_MAC_CTX *ctx, const unsigned char *data, size_t len)
+void zuc_mac_update(ZUC_MAC_CTX *ctx, const uint8_t *data, size_t len)
 {
 	ZUC_UINT32 T = ctx->T;
 	ZUC_UINT32 K0 = ctx->K0;
@@ -299,7 +331,7 @@ void zuc_mac_update(ZUC_MAC_CTX *ctx, const unsigned char *data, size_t len)
 	ctx->T = T;
 }
 
-void zuc_mac_finish(ZUC_MAC_CTX *ctx, const unsigned char *data, size_t nbits, unsigned char mac[4])
+void zuc_mac_finish(ZUC_MAC_CTX *ctx, const uint8_t *data, size_t nbits, uint8_t mac[4])
 {
 	ZUC_UINT32 T = ctx->T;
 	ZUC_UINT32 K0 = ctx->K0;
@@ -361,7 +393,7 @@ void zuc_mac_finish(ZUC_MAC_CTX *ctx, const unsigned char *data, size_t nbits, u
 }
 
 
-typedef unsigned char ZUC_UINT7;
+typedef uint8_t ZUC_UINT7;
 
 static const ZUC_UINT7 ZUC256_D[][16] = {
 	{0x22,0x2F,0x24,0x2A,0x6D,0x40,0x40,0x40,
@@ -381,8 +413,8 @@ static const ZUC_UINT7 ZUC256_D[][16] = {
 	  (uint32_t)(d))
 
 
-static void zuc256_set_mac_key(ZUC_KEY *key, const unsigned char K[32],
-	const unsigned char IV[23], int macbits)
+static void zuc256_set_mac_key(ZUC_STATE *key, const uint8_t K[32],
+	const uint8_t IV[23], int macbits)
 {
 	ZUC_UINT31 *LFSR = key->LFSR;
 	uint32_t R1, R2;
@@ -435,27 +467,27 @@ static void zuc256_set_mac_key(ZUC_KEY *key, const unsigned char K[32],
 	key->R2 = R2;
 }
 
-void zuc256_set_key(ZUC_KEY *key, const unsigned char K[32],
-	const unsigned char IV[23])
+void zuc256_init(ZUC_STATE *key, const uint8_t K[32],
+	const uint8_t IV[23])
 {
 	zuc256_set_mac_key(key, K, IV, 0);
 }
 
-void zuc256_mac_init(ZUC256_MAC_CTX *ctx, const unsigned char key[32],
-	const unsigned char iv[23], int macbits)
+void zuc256_mac_init(ZUC256_MAC_CTX *ctx, const uint8_t key[32],
+	const uint8_t iv[23], int macbits)
 {
 	if (macbits < 32)
 		macbits = 32;
 	else if (macbits > 64)
 		macbits = 128;
 	memset(ctx, 0, sizeof(*ctx));
-	zuc256_set_mac_key((ZUC256_KEY *)ctx, key, iv, macbits);
-	zuc256_generate_keystream((ZUC256_KEY *)ctx, macbits/32, ctx->T);
-	zuc256_generate_keystream((ZUC256_KEY *)ctx, macbits/32, ctx->K0);
+	zuc256_set_mac_key((ZUC256_STATE *)ctx, key, iv, macbits);
+	zuc256_generate_keystream((ZUC256_STATE *)ctx, macbits/32, ctx->T);
+	zuc256_generate_keystream((ZUC256_STATE *)ctx, macbits/32, ctx->K0);
 	ctx->macbits = (macbits/32) * 32;
 }
 
-void zuc256_mac_update(ZUC256_MAC_CTX *ctx, const unsigned char *data, size_t len)
+void zuc256_mac_update(ZUC256_MAC_CTX *ctx, const uint8_t *data, size_t len)
 {
 	ZUC_UINT32 K1, M;
 	size_t n = ctx->macbits / 32;
@@ -477,7 +509,7 @@ void zuc256_mac_update(ZUC256_MAC_CTX *ctx, const unsigned char *data, size_t le
 		M = GETU32(ctx->buf);
 		ctx->buflen = 0;
 
-		K1 = zuc256_generate_keyword((ZUC256_KEY *)ctx);
+		K1 = zuc256_generate_keyword((ZUC256_STATE *)ctx);
 
 		for (i = 0; i < 32; i++) {
 			if (M & 0x80000000) {
@@ -499,7 +531,7 @@ void zuc256_mac_update(ZUC256_MAC_CTX *ctx, const unsigned char *data, size_t le
 
 	while (len >= 4) {
 		M = GETU32(data);
-		K1 = zuc256_generate_keyword((ZUC256_KEY *)ctx);
+		K1 = zuc256_generate_keyword((ZUC256_STATE *)ctx);
 
 		for (i = 0; i < 32; i++) {
 			if (M & 0x80000000) {
@@ -525,7 +557,7 @@ void zuc256_mac_update(ZUC256_MAC_CTX *ctx, const unsigned char *data, size_t le
 	}
 }
 
-void zuc256_mac_finish(ZUC256_MAC_CTX *ctx, const unsigned char *data, size_t nbits, unsigned char *mac)
+void zuc256_mac_finish(ZUC256_MAC_CTX *ctx, const uint8_t *data, size_t nbits, uint8_t *mac)
 {
 	ZUC_UINT32 K1, M;
 	size_t n = ctx->macbits/32;
@@ -546,7 +578,7 @@ void zuc256_mac_finish(ZUC256_MAC_CTX *ctx, const unsigned char *data, size_t nb
 
 	if (ctx->buflen || nbits) {
 		M = GETU32(ctx->buf);
-		K1 = zuc256_generate_keyword((ZUC256_KEY *)ctx);
+		K1 = zuc256_generate_keyword((ZUC256_STATE *)ctx);
 
 
 		for (i = 0; i < ctx->buflen * 8 + nbits; i++) {

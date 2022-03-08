@@ -1,17 +1,50 @@
-/* 
- *   Copyright 2014-2021 The GmSSL Project Authors. All Rights Reserved.
+/* ====================================================================
+ * Copyright (c) 2014 - 2018 The GmSSL Project.  All rights reserved.
  *
- *   Licensed under the Apache License, Version 2.0 (the "License");
- *   you may not use this file except in compliance with the License.
- *   You may obtain a copy of the License at
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
  *
- *       http://www.apache.org/licenses/LICENSE-2.0
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
  *
- *   Unless required by applicable law or agreed to in writing, software
- *   distributed under the License is distributed on an "AS IS" BASIS,
- *   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- *   See the License for the specific language governing permissions and
- *   limitations under the License.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in
+ *    the documentation and/or other materials provided with the
+ *    distribution.
+ *
+ * 3. All advertising materials mentioning features or use of this
+ *    software must display the following acknowledgment:
+ *    "This product includes software developed by the GmSSL Project.
+ *    (http://gmssl.org/)"
+ *
+ * 4. The name "GmSSL Project" must not be used to endorse or promote
+ *    products derived from this software without prior written
+ *    permission. For written permission, please contact
+ *    guanzhi1980@gmail.com.
+ *
+ * 5. Products derived from this software may not be called "GmSSL"
+ *    nor may "GmSSL" appear in their names without prior written
+ *    permission of the GmSSL Project.
+ *
+ * 6. Redistributions of any form whatsoever must retain the following
+ *    acknowledgment:
+ *    "This product includes software developed by the GmSSL Project
+ *    (http://gmssl.org/)"
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE GmSSL PROJECT ``AS IS'' AND ANY
+ * EXPRESSED OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE GmSSL PROJECT OR
+ * ITS CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+ * NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+ * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
+ * OF THE POSSIBILITY OF SUCH DAMAGE.
+ * ====================================================================
  */
 
 #include <stdio.h>
@@ -52,9 +85,9 @@ int zuc_test(void)
 	};
 
 	for (i = 0; i < 3; i++) {
-		ZUC_KEY zuc = {{0}};
+		ZUC_STATE zuc = {{0}};
 		uint32_t buf[3] = {0};
-		zuc_set_key(&zuc, key[i], iv[i]);
+		zuc_init(&zuc, key[i], iv[i]);
 		zuc_generate_keystream(&zuc, 2, buf);
 		if (buf[0] != ciphertext[i][0] || buf[1] != ciphertext[i][1]) {
 			fprintf(stderr, "error generating ZUC key stream on test vector %d\n", i);
@@ -325,10 +358,10 @@ int zuc256_test(void)
 	};
 
 	for (i = 0; i < sizeof(key)/sizeof(key[0]); i++) {
-		ZUC_KEY zuc_key;
+		ZUC_STATE zuc_key;
 		uint32_t buf[20] = {0};
 
-		zuc256_set_key(&zuc_key, key[i], iv[i]);
+		zuc256_init(&zuc_key, key[i], iv[i]);
 		zuc_generate_keystream(&zuc_key, 20, buf);
 
 		if (memcmp(buf, ciphertext[i], 20) != 0) {

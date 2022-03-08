@@ -1,17 +1,49 @@
-/* 
- *   Copyright 2014-2021 The GmSSL Project Authors. All Rights Reserved.
+/*
+ * Copyright (c) 2014 - 2020 The GmSSL Project.  All rights reserved.
  *
- *   Licensed under the Apache License, Version 2.0 (the "License");
- *   you may not use this file except in compliance with the License.
- *   You may obtain a copy of the License at
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
  *
- *       http://www.apache.org/licenses/LICENSE-2.0
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
  *
- *   Unless required by applicable law or agreed to in writing, software
- *   distributed under the License is distributed on an "AS IS" BASIS,
- *   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- *   See the License for the specific language governing permissions and
- *   limitations under the License.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in
+ *    the documentation and/or other materials provided with the
+ *    distribution.
+ *
+ * 3. All advertising materials mentioning features or use of this
+ *    software must display the following acknowledgment:
+ *    "This product includes software developed by the GmSSL Project.
+ *    (http://gmssl.org/)"
+ *
+ * 4. The name "GmSSL Project" must not be used to endorse or promote
+ *    products derived from this software without prior written
+ *    permission. For written permission, please contact
+ *    guanzhi1980@gmail.com.
+ *
+ * 5. Products derived from this software may not be called "GmSSL"
+ *    nor may "GmSSL" appear in their names without prior written
+ *    permission of the GmSSL Project.
+ *
+ * 6. Redistributions of any form whatsoever must retain the following
+ *    acknowledgment:
+ *    "This product includes software developed by the GmSSL Project
+ *    (http://gmssl.org/)"
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE GmSSL PROJECT ``AS IS'' AND ANY
+ * EXPRESSED OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE GmSSL PROJECT OR
+ * ITS CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+ * NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+ * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
+ * OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
 #include <stdio.h>
@@ -43,8 +75,8 @@ static int test_sm2_point(void)
 
 	sm2_point_mul_generator(&P, k);
 
-	printf("k * G :\n");
-	sm2_point_print(stdout, &P, 0, 2);
+	sm2_point_print(stdout, 0, 4, "k * G", &P);
+
 
 	sm2_point_to_compressed_octets(&P, buf);
 	for (i = 0; i < 33; i++) printf("%02x", buf[i]); printf("\n");
@@ -78,12 +110,11 @@ static int test_sm2_do_encrypt(void)
 	size_t plainlen = 0;
 	int r = 0;
 
-	sm2_keygen(&key);
+	sm2_key_generate(&key);
 
 	sm2_do_encrypt(&key, plaintext, sizeof(plaintext), ciphertext);
 
-	printf("ciphertext:\n");
-	sm2_ciphertext_print(stdout, ciphertext, 0, 2);
+	//sm2_ciphertext_print(stdout, 0, 4, "ciphertext", ciphertext);
 
 	sm2_do_decrypt(&key, ciphertext, plainbuf, &plainlen);
 
@@ -101,17 +132,16 @@ static int test_sm2_sign(void)
 	int i;
 	int r;
 
-	sm2_keygen(&key);
-	sm2_key_print(stdout, &key, 0, 0);
+	sm2_key_generate(&key);
+	sm2_key_print(stdout, 0, 4, "sm2_key", &key);
 
-	sm2_sign_init(&ctx, &key, SM2_DEFAULT_ID);
+	sm2_sign_init(&ctx, &key, SM2_DEFAULT_ID, strlen(SM2_DEFAULT_ID));
 	sm2_sign_update(&ctx, msg, sizeof(msg));
 	sm2_sign_finish(&ctx, sig, &siglen);
 
-	printf("signature:\n");
-	sm2_print_signature(stdout, sig, siglen, 0, 2);
+	sm2_signature_print(stdout, 0, 4, "signature", sig, siglen);
 
-	sm2_verify_init(&ctx, &key, SM2_DEFAULT_ID);
+	sm2_verify_init(&ctx, &key, SM2_DEFAULT_ID, strlen(SM2_DEFAULT_ID));
 	sm2_verify_update(&ctx, msg, sizeof(msg));
 	r = sm2_verify_finish(&ctx, sig, siglen);
 	printf("verify %s\n", r > 0 ? "success" : "failed");
@@ -121,7 +151,7 @@ static int test_sm2_sign(void)
 
 int main(void)
 {
-	sm2_algo_selftest();
+	sm2_selftest();
 
 	//test_sm2_point();
 	//test_sm2_sign();

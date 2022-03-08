@@ -1,17 +1,49 @@
-﻿/* 
- *   Copyright 2014-2021 The GmSSL Project Authors. All Rights Reserved.
+﻿/*
+ * Copyright (c) 2014 - 2020 The GmSSL Project.  All rights reserved.
  *
- *   Licensed under the Apache License, Version 2.0 (the "License");
- *   you may not use this file except in compliance with the License.
- *   You may obtain a copy of the License at
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
  *
- *       http://www.apache.org/licenses/LICENSE-2.0
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
  *
- *   Unless required by applicable law or agreed to in writing, software
- *   distributed under the License is distributed on an "AS IS" BASIS,
- *   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- *   See the License for the specific language governing permissions and
- *   limitations under the License.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in
+ *    the documentation and/or other materials provided with the
+ *    distribution.
+ *
+ * 3. All advertising materials mentioning features or use of this
+ *    software must display the following acknowledgment:
+ *    "This product includes software developed by the GmSSL Project.
+ *    (http://gmssl.org/)"
+ *
+ * 4. The name "GmSSL Project" must not be used to endorse or promote
+ *    products derived from this software without prior written
+ *    permission. For written permission, please contact
+ *    guanzhi1980@gmail.com.
+ *
+ * 5. Products derived from this software may not be called "GmSSL"
+ *    nor may "GmSSL" appear in their names without prior written
+ *    permission of the GmSSL Project.
+ *
+ * 6. Redistributions of any form whatsoever must retain the following
+ *    acknowledgment:
+ *    "This product includes software developed by the GmSSL Project
+ *    (http://gmssl.org/)"
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE GmSSL PROJECT ``AS IS'' AND ANY
+ * EXPRESSED OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE GmSSL PROJECT OR
+ * ITS CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+ * NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+ * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
+ * OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
 
@@ -21,13 +53,8 @@
 #include <gmssl/digest.h>
 
 
-int digest_nid(const DIGEST *digest)
-{
-	return digest->nid;
-}
-
 typedef struct {
-	int nid;
+	int oid;
 	char *short_name;
 	char *display_name;
 } DIGEST_TABLE;
@@ -46,65 +73,44 @@ const char *digest_name(const DIGEST *digest)
 {
 	int i;
 	for (i = 0; i < sizeof(digest_table)/sizeof(digest_table[0]); i++) {
-		if (digest->nid == digest_table[i].nid) {
+		if (digest->oid == digest_table[i].oid) {
 			return digest_table[i].short_name;
 		}
 	}
 	return NULL;
 }
 
-size_t digest_size(const DIGEST *digest)
-{
-	return digest->digest_size;
-}
-
-size_t digest_block_size(const DIGEST *digest)
-{
-	return digest->block_size;
-}
-
-int digest_ctx_init(DIGEST_CTX *ctx)
-{
-	memset(ctx, 0, sizeof(DIGEST_CTX));
-	return 1;
-}
-
-void digest_ctx_cleanup(DIGEST_CTX *ctx)
-{
-	memset(ctx, 0, sizeof(DIGEST_CTX));
-}
-
 int digest_init(DIGEST_CTX *ctx, const DIGEST *algor)
 {
+	memset(ctx, 0, sizeof(DIGEST_CTX));
 	ctx->digest = algor;
 	ctx->digest->init(ctx);
 	return 1;
 }
 
-int digest_update(DIGEST_CTX *ctx, const unsigned char *data, size_t datalen)
+int digest_update(DIGEST_CTX *ctx, const uint8_t *data, size_t datalen)
 {
 	ctx->digest->update(ctx, data, datalen);
 	return 1;
 }
 
-int digest_finish(DIGEST_CTX *ctx, unsigned char *dgst, size_t *dgstlen)
+int digest_finish(DIGEST_CTX *ctx, uint8_t *dgst, size_t *dgstlen)
 {
 	ctx->digest->finish(ctx, dgst);
 	*dgstlen = ctx->digest->digest_size;
 	return 1;
 }
 
-int digest(const DIGEST *digest, const unsigned char *data, size_t datalen,
-	unsigned char *dgst, size_t *dgstlen)
+int digest(const DIGEST *digest, const uint8_t *data, size_t datalen,
+	uint8_t *dgst, size_t *dgstlen)
 {
 	DIGEST_CTX ctx;
-	if (!digest_ctx_init(&ctx)
-		|| !digest_init(&ctx, digest)
+	if (!digest_init(&ctx, digest)
 		|| !digest_update(&ctx, data, datalen)
 		|| !digest_finish(&ctx, dgst, dgstlen)) {
 		return 0;
 	}
-	digest_ctx_cleanup(&ctx);
+	memset(&ctx, 0, sizeof(DIGEST_CTX));
 	return 1;
 }
 
@@ -141,7 +147,7 @@ static int sm3_digest_init(DIGEST_CTX *ctx)
 	return 1;
 }
 
-static int sm3_digest_update(DIGEST_CTX *ctx, const unsigned char *in, size_t inlen)
+static int sm3_digest_update(DIGEST_CTX *ctx, const uint8_t *in, size_t inlen)
 {
 	if (!ctx || (!in && inlen != 0)) {
 		return 0;
@@ -150,7 +156,7 @@ static int sm3_digest_update(DIGEST_CTX *ctx, const unsigned char *in, size_t in
 	return 1;
 }
 
-static int sm3_digest_finish(DIGEST_CTX *ctx, unsigned char *dgst)
+static int sm3_digest_finish(DIGEST_CTX *ctx, uint8_t *dgst)
 {
 	if (!ctx || !dgst) {
 		return 0;
@@ -186,7 +192,7 @@ static int md5_digest_init(DIGEST_CTX *ctx)
 	return 1;
 }
 
-static int md5_digest_update(DIGEST_CTX *ctx, const unsigned char *in, size_t inlen)
+static int md5_digest_update(DIGEST_CTX *ctx, const uint8_t *in, size_t inlen)
 {
 	if (!ctx || (!in && inlen != 0)) {
 		return 0;
@@ -195,7 +201,7 @@ static int md5_digest_update(DIGEST_CTX *ctx, const unsigned char *in, size_t in
 	return 1;
 }
 
-static int md5_digest_finish(DIGEST_CTX *ctx, unsigned char *dgst)
+static int md5_digest_finish(DIGEST_CTX *ctx, uint8_t *dgst)
 {
 	if (!ctx || !dgst) {
 		return 0;
@@ -231,7 +237,7 @@ static int sha1_digest_init(DIGEST_CTX *ctx)
 	return 1;
 }
 
-static int sha1_digest_update(DIGEST_CTX *ctx, const unsigned char *in, size_t inlen)
+static int sha1_digest_update(DIGEST_CTX *ctx, const uint8_t *in, size_t inlen)
 {
 	if (!ctx || (!in && inlen != 0)) {
 		return 0;
@@ -240,7 +246,7 @@ static int sha1_digest_update(DIGEST_CTX *ctx, const unsigned char *in, size_t i
 	return 1;
 }
 
-static int sha1_digest_finish(DIGEST_CTX *ctx, unsigned char *dgst)
+static int sha1_digest_finish(DIGEST_CTX *ctx, uint8_t *dgst)
 {
 	if (!ctx || !dgst) {
 		return 0;
@@ -276,7 +282,7 @@ static int sha224_digest_init(DIGEST_CTX *ctx)
 	return 1;
 }
 
-static int sha224_digest_update(DIGEST_CTX *ctx, const unsigned char *in, size_t inlen)
+static int sha224_digest_update(DIGEST_CTX *ctx, const uint8_t *in, size_t inlen)
 {
 	if (!ctx || (!in && inlen != 0)) {
 		return 0;
@@ -285,7 +291,7 @@ static int sha224_digest_update(DIGEST_CTX *ctx, const unsigned char *in, size_t
 	return 1;
 }
 
-static int sha224_digest_finish(DIGEST_CTX *ctx, unsigned char *dgst)
+static int sha224_digest_finish(DIGEST_CTX *ctx, uint8_t *dgst)
 {
 	if (!ctx || !dgst) {
 		return 0;
@@ -318,7 +324,7 @@ static int sha256_digest_init(DIGEST_CTX *ctx)
 	return 1;
 }
 
-static int sha256_digest_update(DIGEST_CTX *ctx, const unsigned char *in, size_t inlen)
+static int sha256_digest_update(DIGEST_CTX *ctx, const uint8_t *in, size_t inlen)
 {
 	if (!ctx || (!in && inlen != 0)) {
 		return 0;
@@ -327,7 +333,7 @@ static int sha256_digest_update(DIGEST_CTX *ctx, const unsigned char *in, size_t
 	return 1;
 }
 
-static int sha256_digest_finish(DIGEST_CTX *ctx, unsigned char *dgst)
+static int sha256_digest_finish(DIGEST_CTX *ctx, uint8_t *dgst)
 {
 	if (!ctx || !dgst) {
 		return 0;
@@ -361,7 +367,7 @@ static int sha384_digest_init(DIGEST_CTX *ctx)
 	return 1;
 }
 
-static int sha384_digest_update(DIGEST_CTX *ctx, const unsigned char *in, size_t inlen)
+static int sha384_digest_update(DIGEST_CTX *ctx, const uint8_t *in, size_t inlen)
 {
 	if (!ctx || (!in && inlen != 0)) {
 		return 0;
@@ -370,7 +376,7 @@ static int sha384_digest_update(DIGEST_CTX *ctx, const unsigned char *in, size_t
 	return 1;
 }
 
-static int sha384_digest_finish(DIGEST_CTX *ctx, unsigned char *dgst)
+static int sha384_digest_finish(DIGEST_CTX *ctx, uint8_t *dgst)
 {
 	if (!ctx || !dgst) {
 		return 0;
@@ -404,7 +410,7 @@ static int sha512_digest_init(DIGEST_CTX *ctx)
 	return 1;
 }
 
-static int sha512_digest_update(DIGEST_CTX *ctx, const unsigned char *in, size_t inlen)
+static int sha512_digest_update(DIGEST_CTX *ctx, const uint8_t *in, size_t inlen)
 {
 	if (!ctx || (!in && inlen != 0)) {
 		return 0;
@@ -413,7 +419,7 @@ static int sha512_digest_update(DIGEST_CTX *ctx, const unsigned char *in, size_t
 	return 1;
 }
 
-static int sha512_digest_finish(DIGEST_CTX *ctx, unsigned char *dgst)
+static int sha512_digest_finish(DIGEST_CTX *ctx, uint8_t *dgst)
 {
 	if (!ctx || !dgst) {
 		return 0;
@@ -438,9 +444,9 @@ const DIGEST *DIGEST_sha512(void)
 }
 
 
-static int sha512_224_digest_finish(DIGEST_CTX *ctx, unsigned char *dgst)
+static int sha512_224_digest_finish(DIGEST_CTX *ctx, uint8_t *dgst)
 {
-	unsigned char buf[SHA512_DIGEST_SIZE];
+	uint8_t buf[SHA512_DIGEST_SIZE];
 	if (!ctx || !dgst) {
 		return 0;
 	}
@@ -466,9 +472,9 @@ const DIGEST *DIGEST_sha512_224(void)
 }
 
 
-static int sha512_256_digest_finish(DIGEST_CTX *ctx, unsigned char *dgst)
+static int sha512_256_digest_finish(DIGEST_CTX *ctx, uint8_t *dgst)
 {
-	unsigned char buf[SHA512_DIGEST_SIZE];
+	uint8_t buf[SHA512_DIGEST_SIZE];
 	if (!ctx || !dgst) {
 		return 0;
 	}

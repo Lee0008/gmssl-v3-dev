@@ -1,17 +1,49 @@
-﻿/* 
- *   Copyright 2014-2021 The GmSSL Project Authors. All Rights Reserved.
+/*
+ * Copyright (c) 2014 - 2020 The GmSSL Project.  All rights reserved.
  *
- *   Licensed under the Apache License, Version 2.0 (the "License");
- *   you may not use this file except in compliance with the License.
- *   You may obtain a copy of the License at
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
  *
- *       http://www.apache.org/licenses/LICENSE-2.0
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
  *
- *   Unless required by applicable law or agreed to in writing, software
- *   distributed under the License is distributed on an "AS IS" BASIS,
- *   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- *   See the License for the specific language governing permissions and
- *   limitations under the License.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in
+ *    the documentation and/or other materials provided with the
+ *    distribution.
+ *
+ * 3. All advertising materials mentioning features or use of this
+ *    software must display the following acknowledgment:
+ *    "This product includes software developed by the GmSSL Project.
+ *    (http://gmssl.org/)"
+ *
+ * 4. The name "GmSSL Project" must not be used to endorse or promote
+ *    products derived from this software without prior written
+ *    permission. For written permission, please contact
+ *    guanzhi1980@gmail.com.
+ *
+ * 5. Products derived from this software may not be called "GmSSL"
+ *    nor may "GmSSL" appear in their names without prior written
+ *    permission of the GmSSL Project.
+ *
+ * 6. Redistributions of any form whatsoever must retain the following
+ *    acknowledgment:
+ *    "This product includes software developed by the GmSSL Project
+ *    (http://gmssl.org/)"
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE GmSSL PROJECT ``AS IS'' AND ANY
+ * EXPRESSED OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE GmSSL PROJECT OR
+ * ITS CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+ * NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+ * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
+ * OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
 
@@ -568,358 +600,4 @@ void asn1_oid_to_octets(int oid, uint8_t *out, size_t *outlen)
 		error_print();
 		assert(0);
 	}
-}
-
-// asn1_oid_from_octets 不返回错误值，只返回 OID_undef
-// 但是数据编码仍可能是非法的
-// 如果返回 OID_undef，需要通过 asn1_oid_nodes_from_octets 判断格式是否正确
-int asn1_oid_from_octets(const uint8_t *in, size_t inlen)
-{
-	int ret = OID_undef;
-	if (inlen == sizeof(DER_x9_62_ecPublicKey)
-		&& memcmp(DER_x9_62_ecPublicKey, in, inlen) == 0) {
-		return OID_x9_62_ecPublicKey;
-	}
-
-	if (inlen >= sizeof(DER_x9_62_ecPublicKey)
-		&& memcmp(in, DER_x9_62_ecPublicKey, sizeof(DER_x9_62_ecPublicKey)) == 0) {
-		if (inlen == sizeof(DER_x9_62_ecPublicKey))
-			ret = OID_x9_62_ecPublicKey;
-		else	ret = asn1_x9_62_curve_oid_from_octets(in, inlen);
-	} else if (inlen > sizeof(DER_sm)
-		&& memcmp(in, DER_sm, sizeof(DER_sm)) == 0) {
-		ret = asn1_sm_oid_from_octets(in, inlen);
-	} else if (inlen > sizeof(DER_secg_curve)
-		&& memcmp(in, DER_secg_curve, sizeof(DER_secg_curve)) == 0) {
-		ret = asn1_secg_curve_oid_from_octets(in, inlen);
-	} else if (inlen > sizeof(DER_x509)
-		&& memcmp(in, DER_x509, sizeof(DER_x509)) == 0) {
-		ret = asn1_x509_oid_from_octets(in, inlen);
-	} else {
-		/*
-		int i;
-		error_print("unknown der\n");
-		print_der(in, inlen);
-		printf("\n");
-		*/
-		return OID_undef;
-	}
-
-	if (ret < 0) {
-		error_print();
-	}
-	return ret;
-}
-
-// 输出长度不固定，并且被多次重复调用，因此提供 **out 形式的参数
-static void uint_to_base128(uint32_t a, uint8_t **out, size_t *outlen)
-{
-	uint8_t buf[5];
-	int n = 0;
-
-	buf[n++] = a & 0x7f;
-	a >>= 7;
-
-	while (a) {
-		buf[n++] = 0x80 | (a & 0x7f);
-		a >>= 7;
-	}
-
-	while (n--) {
-		if (out)
-			*(*out)++ = buf[n];
-		(*outlen)++;
-	}
-}
-
-// 实际上我们在解析的时候是不知道具体在哪里结束的
-// 解析是有可能出错的，如果没有发现最后一个0开头的字节就出错了
-// 还有值太大也会出错，我们最多读取5个字节
-// { 0x81, 0x82 }
-// { 0x81, 0x82, 0x83, 0x84, 0x85, 0x06 }
-static int uint_from_base128(uint32_t *a, const uint8_t **in, size_t *inlen)
-{
-	uint8_t buf[5];
-	int n = 0;
-	int i;
-
-	for (;;) {
-		if ((*inlen)-- < 1 || n >= 5) {
-			return -1;
-		}
-		buf[n] = *(*in)++;
-		if ((buf[n++] & 0x80) == 0) {
-			break;
-		}
-	}
-
-	// 32 - 7*4 = 4, so the first byte should be like 1000bbbb
-	if (n == 5 && (buf[0] & 0x70)) {
-		return -1;
-	}
-
-	*a = 0;
-	for (i = 0; i < n; i++) {
-		*a = ((*a) << 7) | (buf[i] & 0x7f);
-	}
-
-	return 1;
-}
-
-int asn1_oid_nodes_to_octets(const uint32_t *nodes, size_t nodes_count, uint8_t *out, size_t *outlen)
-{
-	if (nodes_count < 2 || nodes_count > 32) {
-		return -1;
-	}
-	if (out)
-		*out++ = (uint8_t)(nodes[0] * 40 + nodes[1]);
-	(*outlen) = 1;
-	nodes += 2;
-	nodes_count -= 2;
-
-	while (nodes_count--) {
-		uint_to_base128(*nodes++, &out, outlen);
-	}
-	return 1;
-}
-
-// 因为这个函数总是被asn1函数调用的，因此给的输入数据长度是已知的
-int asn1_oid_nodes_from_octets(uint32_t *nodes, size_t *nodes_count, const uint8_t *in, size_t inlen)
-{
-	size_t count = 0;
-	const uint8_t *p = in;
-	size_t len = inlen;
-
-	if (!nodes || !nodes_count || !in || inlen <= 0) {
-		error_print();
-		return -1;
-	}
-
-	if (inlen < 1) {
-		error_print();
-		return -1;
-	}
-
-	// FIXME: 需要支持 nodes = NULL 吗？
-	if (nodes) {
-		*nodes++ = (*in) / 40;
-		*nodes++ = (*in) % 40;
-	}
-	in++;
-	inlen--;
-	count += 2;
-
-	while (inlen) {
-		uint32_t val;
-		if (count > 32) {
-			return -1;
-		}
-		if (uint_from_base128(&val, &in, &inlen) < 0) {
-			return -1;
-		}
-		if (nodes) {
-			*nodes++ = val;
-		}
-		count++;
-	}
-
-	*nodes_count = count;
-	return 1;
-}
-
-// 调用方应提供一个已知的 OID 名字，否则函数会返回错误，而非返回 OID_undef
-int asn1_object_identifier_from_name(int *oid,  const char *name)
-{
-	if (!oid || !name) {
-		return -1;
-	}
-
-	if ((*oid = asn1_sm_oid_from_name(name)) != OID_undef)
-		return 1;
-	if ((*oid = asn1_x9_62_curve_oid_from_name(name)) != OID_undef)
-		return 1;
-	if ((*oid = asn1_secg_curve_oid_from_name(name)) != OID_undef)
-		return 1;
-	if ((*oid = asn1_x509_oid_from_name(name)) != OID_undef)
-		return 1;
-
-	return 1;
-}
-
-const char *asn1_object_identifier_name(int oid)
-{
-	if (oid < 0) {
-		return NULL;
-	} else if (oid == OID_undef) {
-		return "undef";
-	} else if (oid <= OID_rsasign_with_sm3) {
-		return asn1_sm_oid_name(oid);
-	} else if (oid <= OID_x9_62_ecPublicKey) { // FIXME: 目前单独处理，后续应增加公钥类型 OID 集合
-		return "x9_62_ecPublicKey";
-	} else if (oid <= OID_prime256v1) {
-		return asn1_x9_62_curve_oid_name(oid);
-	} else if (oid <= OID_secp521r1) {
-		return asn1_secg_curve_oid_name(oid);
-	} else if (oid <= OID_at_role) {
-		return asn1_x509_oid_name(oid);
-	} else {
-		// FIXME: 还有后续的一些X.509 OID没有支持
-		return NULL;
-	}
-}
-
-const char *asn1_object_identifier_description(int oid)
-{
-	if (oid < 0) {
-		return NULL;
-	} else if (oid == OID_undef) {
-		return "<undef>";
-	} else if (oid <= OID_rsasign_with_sm3) {
-		return asn1_sm_oid_description(oid);
-	} else if (oid <= OID_x9_62_ecPublicKey) { // FIXME: 目前单独处理，后续应增加公钥类型 OID 集合
-		return "x9_62_ecPublicKey";
-	} else if (oid <= OID_prime256v1) {
-		return asn1_x9_62_curve_oid_description(oid);
-	} else if (oid <= OID_secp521r1) {
-		return asn1_secg_curve_oid_description(oid);
-	} else if (oid <= OID_at_role) {
-		return asn1_x509_oid_description(oid);
-	}
-	// FIXME: 还有后续的一些X.509 OID没有支持
-	return NULL;
-}
-
-// 测试 oid_nodes 编解码是否正确
-// FIXME: 还应该增加一些外部的测试用例
-int test_asn1_oid_nodes(void)
-{
-	int oid;
-	uint8_t octets[64];
-	uint8_t buf[64];
-	uint32_t nodes[32];
-	size_t octetslen, buflen, nodes_count;
-
-	for (oid = 1; oid <= OID_at_role; oid++) {
-		int i;
-		asn1_oid_to_octets(oid, octets, &octetslen);
-		asn1_oid_nodes_from_octets(nodes, &nodes_count, octets, octetslen);
-		asn1_oid_nodes_to_octets(nodes, nodes_count, buf, &buflen);
-		if (buflen != octetslen || memcmp(octets, buf, buflen) != 0) {
-			fprintf(stderr, "%s %d: oid = %d error\n", __FILE__, __LINE__, oid);
-		}
-
-		printf("%d : ", oid);
-		for (i = 0; i < nodes_count; i++) {
-			printf("%d ", (int)nodes[i]);
-		}
-		printf("\n");
-	}
-
-	return 1;
-}
-
-int test_asn1_oid(void)
-{
-	uint8_t buf[1024];
-	uint8_t *p = buf;
-	size_t len =0;
-	int oid;
-	int i;
-
-	uint32_t nodes[32];
-	size_t nodes_count;
-
-	test_asn1_oid_nodes();
-
-	for (i = 1; i <= OID_at_role; i++) {
-		int j;
-		asn1_oid_to_octets(i, buf, &len);
-		oid = asn1_oid_from_octets(buf, len);
-		printf("%d %s %s ", oid, asn1_object_identifier_name(oid), asn1_object_identifier_description(oid));
-
-		asn1_oid_nodes_from_octets(nodes, &nodes_count, buf, len);
-		for (j = 0; j < nodes_count; j++) {
-			printf("%d.", nodes[j]);
-		}
-		printf("\n");
-	}
-
-	return 1;
-}
-
-int test_asn1_object_identifier_to_der(int oid)
-{
-	uint8_t buf[64] = {0};
-	const uint8_t *cp = buf;
-	uint8_t *p = buf;
-	size_t len = 0, i;
-	uint32_t nodes[32] = {0};
-	size_t nodes_count;
-	int roid;
-
-	if (asn1_object_identifier_to_der(oid, NULL, 0, &p, &len) != 1) {
-		error_print();
-		return 0;
-	}
-	printf("%d : %s : ", oid, asn1_object_identifier_name(oid));
-	print_der(buf, len);
-
-
-	if (asn1_object_identifier_from_der(&roid, nodes, &nodes_count, &cp, &len) != 1) {
-		error_print();
-		return 0;
-	}
-	printf(" : ");
-	print_nodes(nodes, nodes_count);
-	printf("\n");
-
-	if (roid != oid) {
-		error_print();
-		return -1;
-	}
-	if (len != 0) {
-		error_print();
-		return -1;
-	}
-	return 1;
-}
-
-int test_asn1_object_identifier(void)
-{
-	uint8_t buf[2048];
-	const uint8_t *cp = buf;
-	uint8_t *p = buf;
-	size_t len = 0;
-	uint32_t nodes[32] = {0};
-	size_t nodes_count;
-	int oid;
-	int i;
-
-	// 分别测试每个oid分别编解码是否正确
-	for (oid = 1; oid <= OID_at_role; oid++) {
-		if (test_asn1_object_identifier_to_der(oid) < 0) {
-			error_print();
-			return -1;
-		}
-	}
-
-	// 将全部oid编码后再解码
-	for (oid = 1; oid <= OID_at_role; oid++) {
-		if (asn1_object_identifier_to_der(oid, NULL, 0, &p, &len) != 1) {
-			error_print();
-			return -1;
-		}
-	}
-	printf("%s %d: All OIDs encoded length = %zu bytes\n", __FILE__, __LINE__, len);
-	print_der(buf, len);
-	printf("\n");
-
-	while (len) {
-		int ret;
-		if (asn1_object_identifier_from_der(&oid, nodes, &nodes_count, &cp, &len) <= 0) {
-			break;
-		}
-		printf("%d %s\n", oid, asn1_object_identifier_name(oid));
-	}
-	return 1;
 }

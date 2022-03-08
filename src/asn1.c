@@ -1,17 +1,49 @@
-﻿/* 
- *   Copyright 2014-2021 The GmSSL Project Authors. All Rights Reserved.
+﻿/*
+ * Copyright (c) 2014 - 2020 The GmSSL Project.  All rights reserved.
  *
- *   Licensed under the Apache License, Version 2.0 (the "License");
- *   you may not use this file except in compliance with the License.
- *   You may obtain a copy of the License at
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
  *
- *       http://www.apache.org/licenses/LICENSE-2.0
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
  *
- *   Unless required by applicable law or agreed to in writing, software
- *   distributed under the License is distributed on an "AS IS" BASIS,
- *   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- *   See the License for the specific language governing permissions and
- *   limitations under the License.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in
+ *    the documentation and/or other materials provided with the
+ *    distribution.
+ *
+ * 3. All advertising materials mentioning features or use of this
+ *    software must display the following acknowledgment:
+ *    "This product includes software developed by the GmSSL Project.
+ *    (http://gmssl.org/)"
+ *
+ * 4. The name "GmSSL Project" must not be used to endorse or promote
+ *    products derived from this software without prior written
+ *    permission. For written permission, please contact
+ *    guanzhi1980@gmail.com.
+ *
+ * 5. Products derived from this software may not be called "GmSSL"
+ *    nor may "GmSSL" appear in their names without prior written
+ *    permission of the GmSSL Project.
+ *
+ * 6. Redistributions of any form whatsoever must retain the following
+ *    acknowledgment:
+ *    "This product includes software developed by the GmSSL Project
+ *    (http://gmssl.org/)"
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE GmSSL PROJECT ``AS IS'' AND ANY
+ * EXPRESSED OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE GmSSL PROJECT OR
+ * ITS CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+ * NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+ * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
+ * OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
 #include <stdio.h>
@@ -25,6 +57,9 @@
 #include <gmssl/asn1.h>
 #include <gmssl/error.h>
 #include "endian.h"
+
+
+//FIXME: ENUMERATED 没有支持，在CRLReason中用到
 
 
 /*
@@ -99,7 +134,7 @@ const char *asn1_tag_name(int tag)
 	return NULL;
 }
 
-static int asn1_tag_is_cstring(int tag)
+int asn1_tag_is_cstring(int tag)
 {
 	switch (tag) {
 	case ASN1_TAG_UTF8String:
@@ -131,17 +166,20 @@ int asn1_ia5_string_check(const char *a, size_t alen)
 /////////////////////////////////////////////////////////////////////////////////////////////
 // DER encoding
 /////////////////////////////////////////////////////////////////////////////////////////////
-// 这组函数不对输入进行检查
+// 这组函数不对输入进行检查			
+// 还是检查报错比较方便，这样调用的函数更容易实现
+// asn.1编解码不考虑效率的问题
 
-void asn1_tag_to_der(int tag, uint8_t **out, size_t *outlen)
+int asn1_tag_to_der(int tag, uint8_t **out, size_t *outlen)
 {
 	if (out) {
 		*(*out)++ = (uint8_t)tag;
 	}
 	(*outlen)++;
+	return 1;
 }
 
-void asn1_length_to_der(size_t len, uint8_t **out, size_t *outlen)
+int asn1_length_to_der(size_t len, uint8_t **out, size_t *outlen)
 {
 	if (len < 128) {
 		if (out) {
@@ -166,24 +204,41 @@ void asn1_length_to_der(size_t len, uint8_t **out, size_t *outlen)
 		}
 		(*outlen) += 1 + i;
 	}
+	return 1;
 }
 
-void asn1_data_to_der(const uint8_t *data, size_t datalen, uint8_t **out, size_t *outlen)
+// 提供返回值是为了和其他to_der函数一致
+int asn1_data_to_der(const uint8_t *data, size_t datalen, uint8_t **out, size_t *outlen)
 {
 	if (out) {
 		memcpy(*out, data, datalen);
 		*out += datalen;
 	}
 	*outlen += datalen;
+	return 1;
 }
 
 int asn1_tag_from_der(int tag, const uint8_t **in, size_t *inlen)
 {
-	if (*inlen == 0 || **in != tag) {
+	if (*inlen == 0) {
+		//error_print_msg("inlen = %zu\n", *inlen);
+		return 0;
+	}
+	if  (**in != tag) {
+		//error_print_msg("tag get %d instead of %d\n", **in, tag);
 		return 0;
 	}
 	(*in)++;
 	(*inlen)--;
+	return 1;
+}
+
+int asn1_tag_get(int *tag, const uint8_t **in, size_t *inlen)
+{
+	if (*inlen == 0) {
+		return 0;
+	}
+	*tag = **in;
 	return 1;
 }
 
@@ -197,12 +252,14 @@ int asn1_length_from_der(size_t *plen, const uint8_t **pin, size_t *pinlen)
 		return -1;
 	}
 
+
 	if (*in < 128) {
 		len = *in++;
 		inlen--;
 	} else {
 		uint8_t buf[4] = {0};
 		int nbytes = *in++ & 0x7f;
+		//error_print_msg("nbytes = %d\n", nbytes);
 
 		if (nbytes < 1 || nbytes > 4) {
 			error_print();
@@ -220,7 +277,8 @@ int asn1_length_from_der(size_t *plen, const uint8_t **pin, size_t *pinlen)
 	}
 
 	if (inlen < len) {
-		error_print();
+		error_print_msg("inlen = %zu\n", *pinlen);
+		error_print_msg("length = %zu, left = %zu\n", len, inlen);
 		return -1;
 	}
 
@@ -253,18 +311,18 @@ int asn1_header_to_der(int tag, size_t len, uint8_t **out, size_t *outlen)
 	return 1;
 }
 
+
 // If data == NULL, out should not be NULL
-// 这个实现是不支持OPTIONAL的，
+// 这个实现是不支持OPTIONAL的
 int asn1_type_to_der(int tag, const uint8_t *data, size_t datalen, uint8_t **out, size_t *outlen)
 {
-	if (data == NULL && datalen == 0 && out) {
+	// 针对IMPLICIT, OPTIONAL
+	if (data == NULL && datalen == 0) {
 		return 0;
 	}
 
-	if ((!data && out) || datalen >= INT_MAX || (out && !(*out)) || !outlen) {
-		error_print();
-		return -1;
-	}
+	// FIXME: asn1_tag,length,data_to_der这几个函数增加错误检查
+	// 检查这几个函数的返回值				
 	asn1_tag_to_der(tag, out, outlen);
 	asn1_length_to_der(datalen, out, outlen);
 	asn1_data_to_der(data, datalen, out, outlen);
@@ -275,8 +333,11 @@ int asn1_type_to_der(int tag, const uint8_t *data, size_t datalen, uint8_t **out
 int asn1_type_from_der(int tag, const uint8_t **data, size_t *datalen, const uint8_t **in, size_t *inlen)
 {
 	int ret;
+	*data = NULL;
+	*datalen = 0;
 	if ((ret = asn1_tag_from_der(tag, in, inlen)) != 1) {
 		if (ret < 0) error_print();
+		//if (ret == 0) error_print();
 		return ret;
 	}
 	if (asn1_length_from_der(datalen, in, inlen) != 1
@@ -284,27 +345,6 @@ int asn1_type_from_der(int tag, const uint8_t **data, size_t *datalen, const uin
 		error_print();
 		return -1;
 	}
-	return 1;
-}
-
-int asn1_type_copy_from_der(int tag, size_t maxlen, uint8_t *data, size_t *datalen, const uint8_t **in, size_t *inlen)
-{
-	int ret;
-	const uint8_t *p;
-
-	if ((ret = asn1_tag_from_der(tag, in, inlen)) != 1) {
-		return ret;
-	}
-	if (asn1_length_from_der(datalen, in, inlen) != 1
-		|| asn1_data_from_der(&p, *datalen, in, inlen) != 1) {
-		error_print();
-		return -1;
-	}
-	if (*datalen > maxlen) {
-		error_print();
-		return -1;
-	}
-	memcpy(data, p, *datalen);
 	return 1;
 }
 
@@ -336,6 +376,11 @@ int asn1_any_type_from_der(int *tag, const uint8_t **data, size_t *datalen, cons
 	return 1;
 }
 
+int asn1_any_to_der(const uint8_t *tlv, size_t tlvlen, uint8_t **out, size_t *outlen)
+{
+	return asn1_data_to_der(tlv, tlvlen, out, outlen);
+}
+
 int asn1_any_from_der(const uint8_t **tlv, size_t *tlvlen, const uint8_t **in, size_t *inlen)
 {
 	int ret;
@@ -354,6 +399,9 @@ int asn1_any_from_der(const uint8_t **tlv, size_t *tlvlen, const uint8_t **in, s
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+#define ASN1_TRUE 0xff
+#define ASN1_FALSE 0x00
 
 int asn1_boolean_to_der_ex(int tag, int val, uint8_t **out, size_t *outlen)
 {
@@ -452,6 +500,12 @@ int asn1_bit_string_to_der_ex(int tag, const uint8_t *bits, size_t nbits, uint8_
 	return 1;
 }
 
+int asn1_bit_octets_to_der_ex(int tag, const uint8_t *octs, size_t nocts, uint8_t **out, size_t *outlen)
+{
+	return asn1_bit_string_to_der_ex(tag, octs, nocts << 3, out, outlen);
+}
+
+
 int asn1_bits_to_der_ex(int tag, int bits, uint8_t **out, size_t *outlen)
 {
 	size_t nbits = 0;
@@ -489,7 +543,122 @@ int asn1_null_to_der(uint8_t **out, size_t *outlen)
 	return 1;
 }
 
-int asn1_object_identifier_to_der_ex(int tag, int oid, const uint32_t *nodes, size_t nodes_count, uint8_t **out, size_t *outlen)
+static void asn1_oid_node_to_base128(uint32_t a, uint8_t **out, size_t *outlen)
+{
+	uint8_t buf[5];
+	int n = 0;
+
+	buf[n++] = a & 0x7f;
+	a >>= 7;
+
+	while (a) {
+		buf[n++] = 0x80 | (a & 0x7f);
+		a >>= 7;
+	}
+
+	while (n--) {
+		if (out)
+			*(*out)++ = buf[n];
+		(*outlen)++;
+	}
+}
+
+// 实际上我们在解析的时候是不知道具体在哪里结束的
+// 解析是有可能出错的，如果没有发现最后一个0开头的字节就出错了
+// 还有值太大也会出错，我们最多读取5个字节
+// { 0x81, 0x82 }
+// { 0x81, 0x82, 0x83, 0x84, 0x85, 0x06 }
+static int asn1_oid_node_from_base128(uint32_t *a, const uint8_t **in, size_t *inlen)
+{
+	uint8_t buf[5];
+	int n = 0;
+	int i;
+
+	for (;;) {
+		if ((*inlen)-- < 1 || n >= 5) {
+			return -1;
+		}
+		buf[n] = *(*in)++;
+		if ((buf[n++] & 0x80) == 0) {
+			break;
+		}
+	}
+
+	// 32 - 7*4 = 4, so the first byte should be like 1000bbbb
+	if (n == 5 && (buf[0] & 0x70)) {
+		return -1;
+	}
+
+	*a = 0;
+	for (i = 0; i < n; i++) {
+		*a = ((*a) << 7) | (buf[i] & 0x7f);
+	}
+
+	return 1;
+}
+
+int asn1_oid_nodes_to_octets(const uint32_t *nodes, size_t nodes_cnt, uint8_t *out, size_t *outlen)
+{
+	if (nodes_cnt < 2 || nodes_cnt > 32) {
+		return -1;
+	}
+	if (out)
+		*out++ = (uint8_t)(nodes[0] * 40 + nodes[1]);
+	(*outlen) = 1;
+	nodes += 2;
+	nodes_cnt -= 2;
+
+	while (nodes_cnt--) {
+		asn1_oid_node_to_base128(*nodes++, &out, outlen);
+	}
+	return 1;
+}
+
+// 因为这个函数总是被asn1函数调用的，因此给的输入数据长度是已知的
+int asn1_object_identifier_from_octets(uint32_t *nodes, size_t *nodes_cnt, const uint8_t *in, size_t inlen)
+{
+	size_t count = 0;
+	const uint8_t *p = in;
+	size_t len = inlen;
+
+	if (!nodes || !nodes_cnt || !in || inlen <= 0) {
+		error_print();
+		return -1;
+	}
+
+	if (inlen < 1) {
+		error_print();
+		return -1;
+	}
+
+	// FIXME: 需要支持 nodes = NULL 吗？
+	if (nodes) {
+		*nodes++ = (*in) / 40;
+		*nodes++ = (*in) % 40;
+	}
+	in++;
+	inlen--;
+	count += 2;
+
+	while (inlen) {
+		uint32_t val;
+		if (count > 32) {
+			return -1;
+		}
+		if (asn1_oid_node_from_base128(&val, &in, &inlen) < 0) {
+			return -1;
+		}
+		if (nodes) {
+			*nodes++ = val;
+		}
+		count++;
+	}
+
+	*nodes_cnt = count;
+	return 1;
+}
+
+int asn1_object_identifier_to_der_ex(int tag, const uint32_t *nodes, size_t nodes_cnt, uint8_t **out, size_t *outlen)
 {
 	uint8_t octets[32];
 	size_t octetslen = 0;
@@ -502,9 +671,7 @@ int asn1_object_identifier_to_der_ex(int tag, int oid, const uint32_t *nodes, si
 		*(*out)++ = tag;
 	(*outlen)++;
 
-	if (oid != OID_undef)
-		asn1_oid_to_octets(oid, octets, &octetslen);
-	else asn1_oid_nodes_to_octets(nodes, nodes_count, octets, &octetslen);
+	asn1_oid_nodes_to_octets(nodes, nodes_cnt, octets, &octetslen);
 
 	asn1_length_to_der(octetslen, out, outlen);
 
@@ -517,19 +684,94 @@ int asn1_object_identifier_to_der_ex(int tag, int oid, const uint32_t *nodes, si
 	return 1;
 }
 
-int asn1_utf8_string_to_der_ex(int tag, const char *a, uint8_t **out, size_t *outlen)
+const ASN1_OID_INFO *asn1_oid_info_from_name(const ASN1_OID_INFO *infos, size_t count, const char *name)
 {
-	return asn1_type_to_der(tag, (const uint8_t *)a, strlen(a), out, outlen);
+	size_t i;
+	for (i = 0; i < count; i++) {
+		if (strcmp(infos[i].name, name) == 0) {
+			return &infos[i];
+		}
+	}
+	return NULL;
 }
 
-int asn1_printable_string_to_der_ex(int tag, const char *a, uint8_t **out, size_t *outlen)
+const ASN1_OID_INFO *asn1_oid_info_from_oid(const ASN1_OID_INFO *infos, size_t count, int oid)
 {
-	return asn1_type_to_der(tag, (const uint8_t *)a, strlen(a), out, outlen);
+	size_t i;
+	for (i = 0; i < count; i++) {
+		if (infos[i].oid == oid) {
+			return &infos[i];
+		}
+	}
+	return NULL;
 }
 
-int asn1_ia5_string_to_der_ex(int tag, const char *a, uint8_t **out, size_t *outlen)
+// 这个函数可以支持未知的OID，通常只有在print或者解析Extensions时需要调用该函数
+// 注意：函数有特殊返回值
+int asn1_oid_info_from_der_ex(const ASN1_OID_INFO **info, uint32_t *nodes, size_t *nodes_cnt,
+	const ASN1_OID_INFO *infos, size_t count, const uint8_t **in, size_t *inlen)
 {
-	return asn1_type_to_der(tag, (const uint8_t *)a, strlen(a), out, outlen);
+	int ret;
+	size_t i;
+
+	if ((ret = asn1_object_identifier_from_der(nodes, nodes_cnt, in, inlen)) != 1) {
+		if (ret < 0) error_print();
+		return ret;
+	}
+	*info = NULL;
+	for (i = 0; i < count; i++) {
+		if (*nodes_cnt == infos[i].nodes_cnt
+			&& memcmp(nodes, infos[i].nodes, (*nodes_cnt) * sizeof(int)) == 0) {
+			*info = &infos[i];
+			return 1;
+		}
+	}
+	return 2; // 返回非1的正整数表示OID格式正确但是不在给定列表中
+}
+
+int asn1_oid_info_from_der(const ASN1_OID_INFO **info, const ASN1_OID_INFO *infos, size_t count, const uint8_t **in, size_t *inlen)
+{
+	int ret;
+	uint32_t nodes[32];
+	size_t nodes_cnt;
+
+	if ((ret = asn1_oid_info_from_der_ex(info, nodes, &nodes_cnt, infos, count, in, inlen)) < 0) {
+		error_print();
+		return -1;
+	} else if (ret > 1) {
+		error_print();
+		return -1;
+	}
+	return ret;
+}
+
+
+// asn1_oid_from_octets 不返回错误值，只返回 OID_undef
+// 但是数据编码仍可能是非法的
+// 如果返回 OID_undef，需要通过 asn1_object_identifier_from_octets 判断格式是否正确
+
+// 显然这个函数并不合适，因为在整个gmssl中，我们不提供完整的ASN.1数据库，无法从一个OID中给出解析
+
+
+
+
+
+
+
+
+int asn1_utf8_string_to_der_ex(int tag, const char *d, size_t dlen, uint8_t **out, size_t *outlen)
+{
+	return asn1_type_to_der(tag, (const uint8_t *)d, dlen, out, outlen);
+}
+
+int asn1_printable_string_to_der_ex(int tag, const char *d, size_t dlen, uint8_t **out, size_t *outlen)
+{
+	return asn1_type_to_der(tag, (const uint8_t *)d, dlen, out, outlen);
+}
+
+int asn1_ia5_string_to_der_ex(int tag, const char *d, size_t dlen, uint8_t **out, size_t *outlen)
+{
+	return asn1_type_to_der(tag, (const uint8_t *)d, dlen, out, outlen);
 }
 
 int asn1_utc_time_to_der_ex(int tag, time_t a, uint8_t **out, size_t *outlen)
@@ -717,18 +959,26 @@ int asn1_bit_string_from_der_ex(int tag, const uint8_t **bits, size_t *nbits, co
 	int unused_bits;
 
 	if (!bits || !nbits || !pin || !(*pin) || !pinlen) {
+		error_print();
 		return -1;
 	}
+
+	// FIXME: 其他函数可能存在类似情况				
+	*bits = NULL;
+	*nbits = 0;
+
 	if (inlen-- < 1 || *in++ != tag) {
 		return 0;
 	}
 	if (asn1_length_from_der(&len, &in, &inlen) != 1
 		|| len <= 0) {
+		error_print();
 		return -1;
 	}
 
 	unused_bits = *in;
 	if (unused_bits > 8 || (len == 1 && unused_bits > 0)) {
+		error_print();
 		return -1;
 	}
 
@@ -736,6 +986,23 @@ int asn1_bit_string_from_der_ex(int tag, const uint8_t **bits, size_t *nbits, co
 	*nbits = (len - 1) * 8 - unused_bits;
 	*pin = in + len;
 	*pinlen = inlen - len;
+	return 1;
+}
+
+int asn1_bit_octets_from_der_ex(int tag, const uint8_t **octs, size_t *nocts, const uint8_t **in, size_t *inlen)
+{
+	int ret;
+	size_t nbits;
+
+	if ((ret = asn1_bit_string_from_der_ex(tag, octs, &nbits, in, inlen)) != 1) {
+		if (ret < 0) error_print();
+		return ret;
+	}
+	if (nbits % 8) {
+		error_print();
+		return -1;
+	}
+	*nocts = nbits >> 3;
 	return 1;
 }
 
@@ -783,14 +1050,14 @@ int asn1_null_from_der(const uint8_t **in, size_t *inlen)
 	return 1;
 }
 
-int asn1_object_identifier_from_der_ex(int tag, int *oid, uint32_t nodes[32], size_t *nodes_count,
+int asn1_object_identifier_from_der_ex(int tag, uint32_t *nodes, size_t *nodes_cnt,
 	const uint8_t **pin, size_t *pinlen)
 {
 	const uint8_t *in = *pin;
 	size_t inlen = *pinlen;
 	size_t len;
 
-	if (!oid || !nodes || !nodes_count || !pin || !(*pin) || !pinlen) {
+	if (!nodes || !nodes_cnt || !pin || !(*pin) || !pinlen) {
 		error_print();
 		return -1;
 	}
@@ -804,12 +1071,10 @@ int asn1_object_identifier_from_der_ex(int tag, int *oid, uint32_t nodes[32], si
 		error_print();
 		return -1;
 	}
-	// 由于 asn1_oid_from_der 无法判断不识别的 OID 数据编码是否正确，因此必须先解码
-	if (asn1_oid_nodes_from_octets(nodes, nodes_count, in, len) < 0) {
+	if (asn1_object_identifier_from_octets(nodes, nodes_cnt, in, len) != 1) {
 		error_print();
 		return -1;
 	}
-	*oid = asn1_oid_from_octets(in, len);
 	*pin = in + len;
 	*pinlen = inlen - len;
 	return 1;
@@ -959,47 +1224,6 @@ int asn1_generalized_time_from_der_ex(int tag, time_t *t, const uint8_t **pin, s
 	return 1;
 }
 
-// 其中的每一个data/datalen都是一个ASN1的TLV，因此我们可以去解析
-int asn1_sequence_of_get_next_item(const ASN1_SEQUENCE_OF *a, const uint8_t **next, const uint8_t **data, size_t *datalen)
-{
-	int ret;
-	size_t len;
-	int tag;
-	const uint8_t *value;
-	size_t valuelen;
-
-	if (*next == NULL) {
-		*next = a->data;
-	}
-	if (*next < a->data || *next > a->data + a->datalen) {
-		error_print();
-		return -1;
-	}
-	*data = *next;
-	len = a->data + a->datalen - *next;
-	ret = asn1_any_type_from_der(&tag, &value, &valuelen, next, &len);
-	if (ret < 0) error_print();
-	*datalen = *next - *data;
-	return ret;
-}
-
-int asn1_sequence_of_get_count(const ASN1_SEQUENCE_OF *a, size_t *count)
-{
-	int ret;
-	const uint8_t *next = NULL;
-	const uint8_t *data;
-	size_t datalen;
-
-	*count = 0;
-	while ((ret = asn1_sequence_of_get_next_item(a, &next, &data, &datalen)) == 1) {
-		(*count)++;
-	}
-	if (ret < 0) {
-		error_print();
-		return -1;
-	}
-	return 1;
-}
 
 int asn1_check(int expr)
 {
@@ -1008,3 +1232,150 @@ int asn1_check(int expr)
 	error_print();
 	return -1;
 }
+
+int asn1_length_is_zero(size_t len)
+{
+	if (len) {
+		error_print();
+		return -1;
+	}
+	return 1;
+}
+
+int asn1_length_le(size_t len1, size_t len2)
+{
+	if (len1 > len2) {
+		error_print();
+		return -1;
+	}
+	return 1;
+}
+
+int asn1_object_identifier_equ(const uint32_t *a, size_t a_cnt, const uint32_t *b, size_t b_cnt)
+{
+	if (a_cnt != b_cnt
+		|| memcmp(a, b, b_cnt * sizeof(uint32_t)) != 0) {
+		error_print();
+		return 0;
+	}
+	return 1;
+}
+
+
+int asn1_sequence_of_int_to_der(const int *nums, size_t nums_cnt, uint8_t **out, size_t *outlen)
+{
+	size_t len = 0;
+	size_t i;
+	for (i = 0; i < nums_cnt; i++) {
+		if (asn1_int_to_der(nums[i], NULL, &len) != 1) {
+			error_print();
+			return -1;
+		}
+	}
+	if (asn1_sequence_header_to_der(len, out, outlen) != 1) {
+		error_print();
+		return -1;
+	}
+	for (i = 0; i < nums_cnt; i++) {
+		if (asn1_int_to_der(nums[i], out, outlen) != 1) {
+			error_print();
+			return -1;
+		}
+	}
+	return 1;
+}
+
+int asn1_sequence_of_int_from_der(int *nums, size_t *nums_cnt, const uint8_t **in, size_t *inlen)
+{
+	int ret;
+	const uint8_t *d;
+	size_t dlen;
+
+	if ((ret = asn1_sequence_from_der(&d, &dlen, in, inlen)) != 1) {
+		if (ret < 0) error_print();
+		return ret;
+	}
+	*nums_cnt = 0;
+	while (dlen) {
+		int num;
+		if (asn1_int_from_der(&num, &d, &dlen) != 1) {
+			error_print();
+			return -1;
+		}
+		if (nums) {
+			*nums++ = num;
+		}
+		(*nums_cnt)++;
+	}
+	return 1;
+}
+
+int asn1_sequence_of_int_print(FILE *fp, int fmt, int ind, const char *label, const uint8_t *d, size_t dlen)
+{
+	return -1;
+}
+
+
+int asn1_object_identifier_print(FILE *fp, int format, int indent, const char *label, const char *name,
+	const uint32_t *nodes, size_t nodes_cnt)
+{
+	size_t i;
+	format_print(fp, format, indent, "%s: %s (", label, name);
+	for (i = 0; i < nodes_cnt - 1; i++) {
+		fprintf(fp, "%d.", (int)nodes[i]);
+	}
+	fprintf(fp, "%d)\n", nodes[i]);
+	return 1;
+}
+
+int asn1_string_print(FILE *fp, int fmt, int ind, const char *label, int tag, const uint8_t *d, size_t dlen)
+{
+	format_print(fp, fmt, ind, "%s: ", label);
+	while (dlen--) {
+		fprintf(fp, "%c", *d++);
+	}
+	fprintf(fp, "\n");
+	return 1;
+}
+
+int asn1_bits_print(FILE *fp, int fmt, int ind, const char *label, const char **names, size_t names_cnt, int bits)
+{
+	size_t i;
+	format_print(fp, fmt, ind, "%s: ", label);
+
+	for (i = 0; i < names_cnt; i++) {
+		if (bits & 0x01)
+			fprintf(fp, "%s", names[i]);
+		bits >>= 1;
+		if (bits)
+			fprintf(fp, ", ");
+	}
+	fprintf(fp, "\n");
+	if (bits) {
+		error_print();
+		return -1;
+	}
+	return 1;
+}
+
+
+int asn1_types_get_count(const uint8_t *d, size_t dlen, int tag, size_t *cnt)
+{
+	error_print();
+	return -1;
+}
+
+int asn1_types_get_item_by_index(const uint8_t *d, size_t *dlen, int tag,
+	int index, const uint8_t **item_d, size_t *item_dlen)
+{
+	error_print();
+	return -1;
+}
+
+
+
+
+
+
+
+

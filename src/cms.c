@@ -1,85 +1,184 @@
-﻿/* 
- *   Copyright 2014-2021 The GmSSL Project Authors. All Rights Reserved.
+/*
+ * Copyright (c) 2021 - 2021 The GmSSL Project.  All rights reserved.
  *
- *   Licensed under the Apache License, Version 2.0 (the "License");
- *   you may not use this file except in compliance with the License.
- *   You may obtain a copy of the License at
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
  *
- *       http://www.apache.org/licenses/LICENSE-2.0
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
  *
- *   Unless required by applicable law or agreed to in writing, software
- *   distributed under the License is distributed on an "AS IS" BASIS,
- *   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- *   See the License for the specific language governing permissions and
- *   limitations under the License.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in
+ *    the documentation and/or other materials provided with the
+ *    distribution.
+ *
+ * 3. All advertising materials mentioning features or use of this
+ *    software must display the following acknowledgment:
+ *    "This product includes software developed by the GmSSL Project.
+ *    (http://gmssl.org/)"
+ *
+ * 4. The name "GmSSL Project" must not be used to endorse or promote
+ *    products derived from this software without prior written
+ *    permission. For written permission, please contact
+ *    guanzhi1980@gmail.com.
+ *
+ * 5. Products derived from this software may not be called "GmSSL"
+ *    nor may "GmSSL" appear in their names without prior written
+ *    permission of the GmSSL Project.
+ *
+ * 6. Redistributions of any form whatsoever must retain the following
+ *    acknowledgment:
+ *    "This product includes software developed by the GmSSL Project
+ *    (http://gmssl.org/)"
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE GmSSL PROJECT ``AS IS'' AND ANY
+ * EXPRESSED OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE GmSSL PROJECT OR
+ * ITS CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+ * NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+ * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
+ * OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-
+#include <assert.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 #include <gmssl/asn1.h>
 #include <gmssl/aes.h>
 #include <gmssl/sm4.h>
+#include <gmssl/sm2.h>
 #include <gmssl/digest.h>
 #include <gmssl/error.h>
 #include <gmssl/x509.h>
+#include <gmssl/x509_str.h>
+#include <gmssl/x509_alg.h>
+#include <gmssl/x509_ext.h>
+#include <gmssl/x509_crl.h>
 #include <gmssl/rand.h>
 #include <gmssl/cms.h>
 
 
-/*
-data ::= OCTET STRING
-*/
 
+static uint32_t oid_cms_data[] = { oid_sm2_cms,1 };
+static uint32_t oid_cms_signed_data[] = { oid_sm2_cms,2 };
+static uint32_t oid_cms_enveloped_data[] = { oid_sm2_cms,3 };
+static uint32_t oid_cms_signed_and_enveloped_data[] = { oid_sm2_cms,4 };
+static uint32_t oid_cms_encrypted_data[] = { oid_sm2_cms,5 };
+static uint32_t oid_cms_key_agreement_info[] = { oid_sm2_cms,6 };
 
+static const ASN1_OID_INFO cms_content_types[] = {
+	{ OID_cms_data, "data", oid_cms_data, sizeof(oid_cms_data)/sizeof(int) },
+	{ OID_cms_signed_data, "signedData", oid_cms_signed_data, sizeof(oid_cms_signed_data)/sizeof(int) },
+	{ OID_cms_enveloped_data, "envelopedData", oid_cms_signed_data, sizeof(oid_cms_signed_data)/sizeof(int) },
+	{ OID_cms_signed_and_enveloped_data, "signedAndEnvelopedData", oid_cms_signed_and_enveloped_data, sizeof(oid_cms_signed_and_enveloped_data)/sizeof(int) },
+	{ OID_cms_encrypted_data, "encryptedData", oid_cms_encrypted_data, sizeof(oid_cms_encrypted_data)/sizeof(int) },
+	{ OID_cms_key_agreement_info, "keyAgreementInfo", oid_cms_key_agreement_info, sizeof(oid_cms_key_agreement_info)/sizeof(int) }
+};
 
-int cms_data_print(FILE *fp, const uint8_t *a, size_t alen, int format, int indent)
+static const size_t cms_content_types_count =
+	sizeof(cms_content_types)/sizeof(cms_content_types[0]);
+
+const char *cms_content_type_name(int oid)
 {
-	const uint8_t *data;
-	size_t datalen;
+	const ASN1_OID_INFO *info;
+	if (!(info = asn1_oid_info_from_oid(cms_content_types, cms_content_types_count, oid))) {
+		error_print();
+		return NULL;
+	}
+	return info->name;
+}
 
-	if (asn1_octet_string_from_der(&data, &datalen, &a, &alen) != 1) {
+int cms_content_type_from_name(const char *name)
+{
+	const ASN1_OID_INFO *info;
+	if (!(info = asn1_oid_info_from_name(cms_content_types, cms_content_types_count, name))) {
+		error_print();
+		return OID_undef;
+	}
+	return info->oid;
+}
+
+int cms_content_type_to_der(int oid, uint8_t **out, size_t *outlen)
+{
+	const ASN1_OID_INFO *info;
+	size_t len = 0;
+	if (!(info = asn1_oid_info_from_oid(cms_content_types, cms_content_types_count, oid))) {
 		error_print();
 		return -1;
 	}
-	format_bytes(fp, format, indent, "data : ", data, datalen);
-	if (alen > 0) {
+	if (asn1_object_identifier_to_der(info->nodes, info->nodes_cnt, NULL, &len) != 1
+		|| asn1_sequence_header_to_der(len, out, outlen) != 1
+		|| asn1_object_identifier_to_der(info->nodes, info->nodes_cnt, out,  outlen) != 1) {
 		error_print();
 		return -1;
 	}
 	return 1;
 }
 
+int cms_content_type_from_der(int *oid, const uint8_t **in, size_t *inlen)
+{
+	int ret;
+	const uint8_t *p;
+	size_t len;
+	const ASN1_OID_INFO *info;
 
-
-/*
-EncryptedContentInfo ::= SEQUENCE {
-	contentType			OBJECT IDENTIFIER,
-	contentEncryptionAlgorithm	AlgorithmIdentifier,
-	encryptedContent		[0] IMPLICIT OCTET STRING OPTIONAL,
-	sharedInfo1			[1] IMPLICIT OCTET STRING OPTIONAL,
-	sharedInfo2			[2] IMPLICIT OCTET STRING OPTIONAL,
+	*oid = 0;
+	if ((ret = asn1_sequence_from_der(&p, &len, in, inlen)) != 1) {
+		if (ret < 0) error_print();
+		return ret;
+	}
+	if ((ret = asn1_oid_info_from_der(&info, cms_content_types, cms_content_types_count, &p, &len)) != 1
+		|| asn1_length_is_zero(len) != 1) {
+		error_print();
+		return ret;
+	}
+	*oid = info->oid;
+	return 1;
 }
-*/
 
-int cms_enced_content_info_to_der(int enc_algor, const uint8_t *enc_iv, size_t enc_iv_len,
-	int content_type, const uint8_t *enced_content, size_t enced_content_len,
+int cms_content_info_to_der(
+	int content_type,
+	const uint8_t *content, size_t content_len,
+	uint8_t **out, size_t *outlen)
+{
+	return -1;
+}
+
+int cms_content_info_from_der(
+	int *content_type,
+	const uint8_t **content, size_t *content_len, // 这里获得的是完整的TLV
+	const uint8_t **in, size_t *inlen)
+{
+	return -1;
+}
+
+int cms_content_info_print(FILE *fp, int fmt, int ind, const char *label, const uint8_t *d, size_t dlen)
+{
+	return -1;
+}
+
+int cms_enced_content_info_to_der(
+	int content_type,
+	int enc_algor, const uint8_t *enc_iv, size_t enc_iv_len,
+	const uint8_t *enced_content, size_t enced_content_len,
 	const uint8_t *shared_info1, size_t shared_info1_len,
 	const uint8_t *shared_info2, size_t shared_info2_len,
 	uint8_t **out, size_t *outlen)
 {
 	size_t len = 0;
-
 	if (cms_content_type_to_der(content_type, NULL, &len) != 1
 		|| x509_encryption_algor_to_der(enc_algor, enc_iv, enc_iv_len, NULL, &len) != 1
 		|| asn1_implicit_octet_string_to_der(0, enced_content, enced_content_len, NULL, &len) < 0
 		|| asn1_implicit_octet_string_to_der(1, shared_info1, shared_info1_len, NULL, &len) < 0
-		|| asn1_implicit_octet_string_to_der(2, shared_info2, shared_info2_len, NULL, &len) < 0) {
-		error_print();
-		return -1;
-	}
-	if (asn1_sequence_header_to_der(len, out, outlen) != 1
+		|| asn1_implicit_octet_string_to_der(2, shared_info2, shared_info2_len, NULL, &len) < 0
+		|| asn1_sequence_header_to_der(len, out, outlen) != 1
 		|| cms_content_type_to_der(content_type, out, outlen) != 1
 		|| x509_encryption_algor_to_der(enc_algor, enc_iv, enc_iv_len, out, outlen) != 1
 		|| asn1_implicit_octet_string_to_der(0, enced_content, enced_content_len, out, outlen) < 0
@@ -91,616 +190,7 @@ int cms_enced_content_info_to_der(int enc_algor, const uint8_t *enc_iv, size_t e
 	return 1;
 }
 
-int cms_enced_content_info_from_der(int *content_type,
-	int *enc_algor, const uint8_t **enc_iv, size_t *enc_iv_len,
-	const uint8_t **enced_content, size_t *enced_content_len,
-	const uint8_t **shared_info1, size_t *shared_info1_len,
-	const uint8_t **shared_info2, size_t *shared_info2_len,
-	const uint8_t **in, size_t *inlen)
-{
-	int ret;
-	const uint8_t *data;
-	size_t datalen;
-	uint32_t nodes[32];
-	size_t nodes_count;
-
-	if ((ret = asn1_sequence_from_der(&data, &datalen, in, inlen)) != 1) {
-		if (ret < 0) error_print();
-		return ret;
-	}
-	if (cms_content_type_from_der(content_type, &data, &datalen) != 1
-		|| x509_encryption_algor_from_der(enc_algor, nodes, &nodes_count, enc_iv, enc_iv_len, &data, &datalen) != 1
-		|| asn1_implicit_octet_string_from_der(0, enced_content, enced_content_len, &data, &datalen) < 0
-		|| asn1_implicit_octet_string_from_der(1, shared_info1, shared_info1_len, &data, &datalen) < 0
-		|| asn1_implicit_octet_string_from_der(1, shared_info2, shared_info2_len, &data, &datalen) < 0
-		|| asn1_check(datalen == 0) != 1) {
-		error_print();
-		return -1;
-	}
-	return 1;
-}
-
-int cms_enced_content_info_print(FILE *fp, const uint8_t *a, size_t alen, int format, int indent)
-{
-	int ret;
-	int content_type = 0;
-	int enc_algor = 0;
-	const uint8_t *enc_iv = NULL;
-	const uint8_t *enced_content = NULL;
-	const uint8_t *shared_info1 = NULL;
-	const uint8_t *shared_info2 = NULL;
-	size_t enc_iv_len = 0;
-	size_t enced_content_len = 0;
-	size_t shared_info1_len = 0;
-	size_t shared_info2_len = 0;
-
-	format_print(fp, format, indent, "EncryptedContentInfo:\n");
-	indent += 4;
-
-	if ((ret = cms_enced_content_info_from_der(&content_type,
-		&enc_algor, &enc_iv, &enc_iv_len,
-		&enced_content, &enced_content_len,
-		&shared_info1, &shared_info1_len,
-		&shared_info2, &shared_info2_len,
-		&a, &alen)) != 1) {
-		error_print();
-	}
-
-	format_print(fp, format, indent, "contentType: %s\n", cms_content_type_name(content_type));
-	format_print(fp, format, indent, "contentEncryptionAlgorithm: %s\n", x509_encryption_algor_name(enc_algor));
-	format_bytes(fp, format, indent + 4, "iv: ", enc_iv, enc_iv_len);
-	format_bytes(fp, format, indent, "encryptedContent: ", enced_content, enced_content_len);
-	format_bytes(fp, format, indent, "sharedInfo1: ", shared_info1, shared_info1_len);
-	format_bytes(fp, format, indent, "sharedInfo2: ", shared_info2, shared_info2_len);
-	return ret;
-}
-
-int cms_enced_content_info_encrypt_to_der(const SM4_KEY *sm4_key, const uint8_t iv[16],
-	int content_type, const uint8_t *content, size_t content_len,
-	const uint8_t *shared_info1, size_t shared_info1_len,
-	const uint8_t *shared_info2, size_t shared_info2_len,
-	uint8_t **out, size_t *outlen)
-{
-	uint8_t enced_content[content_len + 256];
-	size_t enced_content_len;
-
-	error_print_msg("*outlen = %zu\n", *outlen);
-
-	if (sm4_cbc_padding_encrypt(sm4_key, iv, content, content_len,
-		enced_content, &enced_content_len) != 1) {
-		error_print();
-		return -1;
-	}
-	error_print_msg("content_len = %zu, out = %zu\n", content_len, enced_content_len);
-
-	if (cms_enced_content_info_to_der(OID_sm4_cbc, iv, 16,
-		content_type, enced_content, enced_content_len,
-		shared_info1, shared_info1_len,
-		shared_info2, shared_info2_len,
-		out, outlen) != 1) {
-		error_print();
-		return -1;
-	}
-	error_print_msg("*outlen = %zu\n\n", *outlen);
-	return 1;
-}
-
-int cms_enced_content_info_decrypt_from_der(const SM4_KEY *key,
-	int *content_type, uint8_t *content, size_t *content_len,
-	const uint8_t **shared_info1, size_t *shared_info1_len,
-	const uint8_t **shared_info2, size_t *shared_info2_len,
-	const uint8_t **in, size_t *inlen)
-{
-	int ret;
-	int enc_algor;
-	const uint8_t *enc_iv;
-	size_t enc_iv_len;
-	const uint8_t *enced_content;
-	size_t enced_content_len;
-
-	if ((ret = cms_enced_content_info_from_der(content_type,
-		&enc_algor, &enc_iv, &enc_iv_len,
-		&enced_content, &enced_content_len,
-		shared_info1, shared_info1_len,
-		shared_info2, shared_info2_len,
-		in, inlen)) != 1) {
-		if (ret < 0) error_print();
-		return ret;
-	}
-	if (sm4_cbc_padding_decrypt(key, enc_iv, enced_content, enced_content_len,
-		content, content_len) != 1) {
-		error_print();
-		return -1;
-	}
-	return 1;
-}
-
-
-
-/*
-EncryptedData ::= SEQUENCE {
-	version				INTEGER (1),
-	encryptedContentInfo		EncryptedContentInfo ::= SEQUENCE {
-		contentType			OBJECT IDENTIFIER,
-		contentEncryptionAlgorithm	AlgorithmIdentifier, // 包含IV
-		encryptedContent		[0] IMPLICIT OCTET STRING OPTIONAL,
-		sharedInfo1			[1] IMPLICIT OCTET STRING OPTIONAL,
-		sharedInfo2			[2] IMPLICIT OCTET STRING OPTIONAL,
-}
-*/
-
-int cms_encrypted_data_to_der(int enc_algor, const uint8_t *enc_iv, size_t enc_iv_len,
-	int content_type, const uint8_t *enced_content, size_t enced_content_len,
-	const uint8_t *shared_info1, size_t shared_info1_len,
-	const uint8_t *shared_info2, size_t shared_info2_len,
-	uint8_t **out, size_t *outlen)
-{
-	size_t len = 0;
-
-	if (asn1_int_to_der(CMS_version, NULL, &len) != 1
-		|| cms_enced_content_info_to_der(enc_algor, enc_iv, enc_iv_len,
-			content_type, enced_content, enced_content_len,
-			shared_info1, shared_info1_len,
-			shared_info2, shared_info2_len,
-			NULL, &len) != 1) {
-		error_print();
-		return -1;
-	}
-	error_print_msg("len = %zu\n", len);
-	if (asn1_sequence_header_to_der(len, out, outlen) != 1
-		|| asn1_int_to_der(CMS_version, out, outlen) != 1
-		|| cms_enced_content_info_to_der(enc_algor, enc_iv, enc_iv_len,
-			content_type, enced_content, enced_content_len,
-			shared_info1, shared_info1_len,
-			shared_info2, shared_info2_len,
-			out, outlen) != 1) {
-		error_print();
-		return -1;
-	}
-	return 1;
-}
-
-int cms_encrypted_data_decrypt_from_der(const SM4_KEY *key,
-	int *content_type, uint8_t *content, size_t *content_len,
-	const uint8_t **shared_info1, size_t *shared_info1_len,
-	const uint8_t **shared_info2, size_t *shared_info2_len,
-	const uint8_t **in, size_t *inlen)
-{
-	int ret;
-	const uint8_t *data;
-	size_t datalen;
-	int version;
-
-	format_bytes(stderr, 0, 0, "in = ", *in, *inlen);
-	error_print_msg("len =%zu\n", *inlen);
-
-	if ((ret = asn1_sequence_from_der(&data, &datalen, in, inlen)) != 1) {
-		if (ret < 0) error_print();
-		return ret;
-	}
-	if (asn1_int_from_der(&version, &data, &datalen) != 1
-		|| version != CMS_version) {
-		error_print();
-		return -1;
-	}
-
-	if (cms_enced_content_info_decrypt_from_der(key,
-		content_type, content, content_len,
-		shared_info1, shared_info1_len,
-		shared_info2, shared_info2_len,
-		&data, &datalen) != 1
-		|| datalen) {
-		error_print();
-		return -1;
-	}
-	return 1;
-}
-
-int cms_encrypted_data_print(FILE *fp, const uint8_t *a, size_t alen, int format, int indent)
-{
-	const uint8_t *data;
-	size_t datalen;
-	int version;
-	const uint8_t *enced_content_info;
-	size_t enced_content_info_len;
-	const uint8_t *p;
-	size_t len;
-
-	if (asn1_sequence_from_der(&data, &datalen, &a, &alen) != 1) {
-		error_print();
-		return -1;
-	}
-
-	format_print(fp, format, indent, "EncryptedData\n");
-	indent += 4;
-
-	if (asn1_int_from_der(&version, &data, &datalen) != 1) {
-		error_print();
-		return -1;
-	}
-	format_print(fp, format, indent, "Version : %d\n", version);
-
-	enced_content_info = data;
-	if (asn1_sequence_from_der(&p, &len, &data, &datalen) != 1) {
-		error_print();
-		return -1;
-	}
-	enced_content_info_len = data - enced_content_info;
-	if (cms_enced_content_info_print(fp, enced_content_info, enced_content_info_len,
-		format, indent) != 1) {
-		error_print();
-		return -1;
-	}
-
-	if (datalen) {
-		error_print();
-		format_print(fp, format, indent, "ErrorLeft %zu bytes\n", datalen);
-	}
-	if (alen) {
-		error_print();
-		format_print(fp, format, indent, "ErrorLeft %zu bytes\n", alen);
-	}
-
-	return 1;
-}
-
-
-int cms_encrypted_data_from_der(int *content_type,
-	int *enc_algor, const uint8_t **enc_iv, size_t *enc_iv_len,
-	const uint8_t **enced_content, size_t *enced_content_len,
-	const uint8_t **shared_info1, size_t *shared_info1_len,
-	const uint8_t **shared_info2, size_t *shared_info2_len,
-	const uint8_t **in, size_t *inlen)
-{
-	int ret;
-	const uint8_t *data;
-	size_t datalen;
-	int version;
-
-	if ((ret = asn1_sequence_from_der(&data, &datalen, in, inlen)) != 1) {
-		if (ret < 0) error_print();
-		return ret;
-	}
-	if (asn1_int_from_der(&version, &data, &datalen) != 1
-		|| cms_enced_content_info_from_der(content_type,
-			enc_algor, enc_iv, enc_iv_len,
-			enced_content, enced_content_len,
-			shared_info1, shared_info1_len,
-			shared_info2, shared_info2_len,
-			&data, &datalen) != 1
-		|| asn1_check(datalen == 0) != 1) {
-		error_print();
-		return -1;
-	}
-	if (version != CMS_version) {
-		error_print();
-		return -1;
-	}
-	return 1;
-}
-
-int cms_encrypted_data_encrypt_to_der(const SM4_KEY *sm4_key, const uint8_t iv[16],
-	int content_type, const uint8_t *content, size_t content_len,
-	const uint8_t *shared_info1, size_t shared_info1_len,
-	const uint8_t *shared_info2, size_t shared_info2_len,
-	uint8_t **out, size_t *outlen)
-{
-	size_t len = 0;
-
-	error_print_msg("outlen = %zu\n", *outlen);
-
-	if (asn1_int_to_der(CMS_version, NULL, &len) != 1
-		|| cms_enced_content_info_encrypt_to_der(sm4_key, iv,
-			content_type, content, content_len,
-			shared_info1, shared_info1_len,
-			shared_info2, shared_info2_len,
-			NULL, &len) != 1) {
-		error_print();
-		return -1;
-	}
-	error_print_msg("len = %zu\n", len);
-	if (asn1_sequence_header_to_der(len, out, outlen) != 1
-		|| asn1_int_to_der(CMS_version, out, outlen) != 1
-		|| cms_enced_content_info_encrypt_to_der(sm4_key, iv,
-			content_type, content, content_len,
-			shared_info1, shared_info1_len,
-			shared_info2, shared_info2_len,
-			out, outlen) != 1) {
-		error_print();
-		return -1;
-	}
-	error_print_msg("outlen = %zu\n\n", *outlen);
-	return 1;
-}
-
-
-/*
-KeyAgreementInfo ::= SEQUENCE {
-	version			INTEGER (1),
-	tempPublicKeyR		SM2PublicKey,
-	userCertificate		Certificate,
-	userID			OCTET STRING
-}
-*/
-
-int cms_key_agreement_info_from_der(SM2_KEY *pub_key, X509_CERTIFICATE *cert,
-	const uint8_t **user_id, size_t *user_id_len, const uint8_t **in, size_t *inlen)
-{
-	int ret;
-	const uint8_t *data;
-	size_t datalen;
-	int version;
-
-	if ((ret = asn1_sequence_from_der(&data, &datalen, in, inlen)) != 1) {
-		if (ret < 0) error_print();
-		return ret;
-	}
-	if (asn1_int_from_der(&version, &data, &datalen) != 1
-		|| sm2_public_key_info_from_der(pub_key, &data, &datalen) != 1
-		|| x509_certificate_from_der(cert, &data, &datalen) != 1
-		|| asn1_octet_string_from_der(user_id, user_id_len, &data, &datalen) != 1
-		|| datalen > 0) {
-		error_print();
-		return -1;
-	}
-	return 1;
-}
-
-int cms_key_agreement_info_to_der(const SM2_KEY *pub_key, const X509_CERTIFICATE *cert,
-	const uint8_t *user_id, size_t user_id_len, uint8_t **out, size_t *outlen)
-{
-	size_t len = 0;
-
-	if (asn1_int_to_der(CMS_version, NULL, &len) != 1
-		|| sm2_public_key_info_to_der(pub_key, NULL, &len) != 1
-		|| x509_certificate_to_der(cert, NULL, &len) != 1
-		|| asn1_octet_string_to_der(user_id, user_id_len, NULL, &len) != 1) {
-		error_print();
-		return -1;
-	}
-	if (asn1_sequence_header_to_der(len, out, outlen) != 1
-		|| asn1_int_to_der(CMS_version, out, outlen) != 1
-		|| sm2_public_key_info_to_der(pub_key, out, outlen) != 1
-		|| x509_certificate_to_der(cert, out, outlen) != 1
-		|| asn1_octet_string_to_der(user_id, user_id_len, out, outlen) != 1) {
-		error_print();
-		return -1;
-	}
-	return 1;
-}
-
-
-
-/*
-IssuerAndSerialNumber ::= SEQUENCE {
-	isser		Name,
-	serialNumber	INTEGER
-}
-*/
-
-
-int cms_issuer_and_serial_number_from_certificate(const X509_NAME **issuer,
-	const uint8_t **serial_number, size_t *serial_number_len,
-	const X509_CERTIFICATE *cert)
-{
-	const X509_TBS_CERTIFICATE *tbs = &cert->tbs_certificate;
-	*issuer = &tbs->issuer;
-	*serial_number = tbs->serial_number;
-	*serial_number_len = tbs->serial_number_len;
-	return 1;
-}
-
-int cms_public_key_from_certificate(const SM2_KEY **sm2_key,
-	const X509_CERTIFICATE *cert)
-{
-	const X509_TBS_CERTIFICATE *tbs = &cert->tbs_certificate;
-	*sm2_key = &tbs->subject_public_key_info.sm2_key;
-	return 1;
-}
-
-int cms_issuer_and_serial_number_to_der(const X509_NAME *issuer,
-	const uint8_t *serial_number, size_t serial_number_len,
-	uint8_t **out, size_t *outlen)
-{
-	size_t len = 0;
-
-	if (x509_name_to_der(issuer, NULL, &len) != 1
-		|| asn1_integer_to_der(serial_number, serial_number_len, NULL, &len) != 1
-		|| asn1_sequence_header_to_der(len, out, outlen) != 1
-		|| x509_name_to_der(issuer, out, outlen) != 1
-		|| asn1_integer_to_der(serial_number, serial_number_len, out, outlen) != 1) {
-		error_print();
-		return -1;
-	}
-	return 1;
-}
-
-int cms_issuer_and_serial_number_from_der(X509_NAME *issuer,
-	const uint8_t **serial_number, size_t *serial_number_len,
-	const uint8_t **in, size_t *inlen)
-{
-	int ret;
-	const uint8_t *data;
-	size_t datalen;
-
-	if ((ret = asn1_sequence_from_der(&data, &datalen, in, inlen)) != 1) {
-		if (ret < 0) error_print();
-		return ret;
-	}
-	if (x509_name_from_der(issuer, &data, &datalen) != 1
-		|| asn1_integer_from_der(serial_number, serial_number_len, &data, &datalen) != 1
-		|| datalen > 0) {
-		error_print();
-		return -1;
-	}
-	return 1;
-}
-
-// 打印的使用场景可能是没有header的
-int cms_issuer_and_serial_number_print(FILE *fp, const uint8_t *in, size_t inlen, int format, int indent)
-{
-	/*
-	int ret;
-	const uint8_t *data;
-	size_t datalen;
-	X509_NAME issuer;
-	const uint8_t *serial_number;
-	size_t serial_number_len;
-
-	if ((ret = asn1_sequence_from_der(&data, &datalen, in, inlen)) != 1) {
-		if (ret < 0) error_print();
-		return ret;
-	}
-	format_print(fp, format, indent, "IssuerAndSerialNumber\n");
-	indent += 4;
-
-	if (x509_name_from_der(&issuer, &data, &datalen) != 1) goto bad;
-	format_print(fp, format, indent, "issuer :\n");
-	x509_name_print(fp, &issuer, format, indent);
-
-	if (asn1_integer_from_der(&serial_number, &serial_number_len, &data, &datalen) != 1) goto bad;
-	format_bytes(fp, format, indent, "serialNumber : ", serial_number, serial_number_len);
-	return 1;
-bad:
-	error_print();
-	*/
-	return -1;
-}
-
-
-
-/*
-RecipientInfo ::= SEQUENCE {
-	version				INTEGER (1),
-	issuerAndSerialNumber		IssuerAndSerialNumber,
-	keyEncryptionAlgorithm		AlgorithmIdentifier,
-	encryptedKey			OCTET STRING
-}
-*/
-
-int cms_recipient_info_to_der(const X509_NAME *issuer,
-	const uint8_t *serial_number, size_t serial_number_len,
-	const uint8_t *enced_key, size_t enced_key_len,
-	uint8_t **out, size_t *outlen)
-{
-	size_t len = 0;
-
-	if (asn1_int_to_der(CMS_version, NULL, &len) != 1
-		|| cms_issuer_and_serial_number_to_der(issuer, serial_number, serial_number_len, NULL, &len) != 1
-		|| x509_public_key_encryption_algor_to_der(OID_sm2encrypt, NULL, &len) != 1
-		|| asn1_octet_string_to_der(enced_key, enced_key_len, NULL, &len) != 1) {
-		error_print();
-		return -1;
-	}
-	if (asn1_sequence_header_to_der(len, out, outlen) != 1
-		|| asn1_int_to_der(CMS_version, out, outlen) != 1
-		|| cms_issuer_and_serial_number_to_der(issuer, serial_number, serial_number_len, out, outlen) != 1
-		|| x509_public_key_encryption_algor_to_der(OID_sm2encrypt, out, outlen) != 1
-		|| asn1_octet_string_to_der(enced_key, enced_key_len, out, outlen) != 1) {
-		error_print();
-		return -1;
-	}
-	return 1;
-}
-
-int cms_recipient_info_from_der(X509_NAME *issuer,
-	const uint8_t **serial_number, size_t *serial_number_len,
-	const uint8_t **enced_key, size_t *enced_key_len,
-	const uint8_t **in, size_t *inlen)
-{
-	int ret;
-	const uint8_t *data;
-	size_t datalen;
-	int version;
-	int pke_algor;
-	uint32_t pke_algor_nodes[32];
-	size_t pke_algor_nodes_count;
-	const uint8_t *iv;
-	size_t ivlen;
-
-	if ((ret = asn1_sequence_from_der(&data, &datalen, in, inlen)) != 1) {
-		if (ret < 0) error_print();
-		return ret;
-	}
-	if (asn1_int_from_der(&version, &data, &datalen) != 1
-		|| cms_issuer_and_serial_number_from_der(issuer, serial_number, serial_number_len, &data, &datalen) != 1
-		|| x509_public_key_encryption_algor_from_der(&pke_algor, pke_algor_nodes, &pke_algor_nodes_count, &iv, &ivlen, &data, &datalen) != 1
-		|| asn1_octet_string_from_der(enced_key, enced_key_len, &data, &datalen) != 1
-		|| datalen) {
-		error_print();
-		return -1;
-	}
-	if (version != CMS_version) {
-		error_print();
-		return -1;
-	}
-
-	return -1;
-}
-
-int cms_recipient_info_print(FILE *fp, const uint8_t *a, size_t alen, int format, int indent)
-{
-	return -1;
-}
-
-int cms_recipient_info_encrypt_to_der(const SM2_KEY *sm2_key,
-	const X509_NAME *issuer, const uint8_t *serial_number, size_t serial_number_len,
-	const uint8_t *key, size_t keylen,
-	uint8_t **out, size_t *outlen)
-{
-	size_t len = 0;
-	uint8_t buf[keylen + 256];
-	size_t buflen;
-
-	sm2_encrypt(sm2_key, key, keylen, buf, &buflen);
-
-	cms_recipient_info_to_der(issuer, serial_number, serial_number_len,
-		buf, buflen, out, outlen);
-
-	return 1;
-}
-
-int cms_recipient_info_decrypt_from_der(const SM2_KEY *sm2_key,
-	X509_NAME *issuer, const uint8_t **serial_number, size_t *serial_number_len,
-	uint8_t *key, size_t *keylen,
-	const uint8_t **in, size_t *inlen)
-{
-	/*
-	if (cms_recipient_info_from_der(issuer, serial_number, serial_number_len,
-		&enced_key, &enced_key_len, &rcpt_info, &rcpt_info_len) != 1
-		|| rcpt_info_len) {
-		error_print();
-		return -1;
-	}
-
-	sm2_decrypt(sm2_key, enced_key, enced_key_len, key, keylen);
-	*/
-	return -1;
-}
-
-													
-/*
-EnvelopedData ::= SEQUENCE {
-	version			INTEGER (1),
-	recipientInfos		SET OF RecipientInfo,
-	encryptedContentInfo	EncryptedContentInfo
-}
-*/
-
-// 这个函数几乎是没有用的，因为我们用一个整体的函数去调用这个功能
-int cms_enveloped_data_to_der(const uint8_t *rcpt_infos, size_t rcpt_infos_len,
-	int content_type,
-	int enc_algor,
-	const uint8_t *enc_iv, size_t enc_iv_len,
-	const uint8_t *enced_content, size_t enced_content_len,
-	const uint8_t *shared_info1, size_t shared_info1_len,
-	const uint8_t *shared_info2, size_t shared_info2_len,
-	const uint8_t **out, size_t *outlen)
-{
-	return -1;
-}
-
-int cms_enveloped_data_from_der(const uint8_t **rcpt_infos, size_t *rcpt_infos_len,
+int cms_enced_content_info_from_der(
 	int *content_type,
 	int *enc_algor, const uint8_t **enc_iv, size_t *enc_iv_len,
 	const uint8_t **enced_content, size_t *enced_content_len,
@@ -709,392 +199,395 @@ int cms_enveloped_data_from_der(const uint8_t **rcpt_infos, size_t *rcpt_infos_l
 	const uint8_t **in, size_t *inlen)
 {
 	int ret;
-	const uint8_t *data;
-	size_t datalen;
-	int version;
+	const uint8_t *d;
+	size_t dlen;
 
-	if ((ret = asn1_sequence_from_der(&data, &datalen, in, inlen)) != 1) {
+	if ((ret = asn1_sequence_from_der(&d, &dlen, in, inlen)) != 1) {
 		if (ret < 0) error_print();
 		return ret;
 	}
-	if (asn1_int_from_der(&version, &data, &datalen) != 1
-		|| asn1_set_from_der(rcpt_infos, rcpt_infos_len, &data, &datalen) != 1
-		|| cms_enced_content_info_from_der(content_type,
-			enc_algor, enc_iv, enc_iv_len,
-			enced_content, enced_content_len,
-			shared_info1, shared_info1_len,
-			shared_info2, shared_info2_len,
-			&data, &datalen) != 1
-		|| asn1_check(datalen == 0) != 1) {
+	if (cms_content_type_from_der(content_type, &d, &dlen) != 1
+		|| x509_encryption_algor_from_der(enc_algor, enc_iv, enc_iv_len, &d, &dlen) != 1
+		|| asn1_implicit_octet_string_from_der(0, enced_content, enced_content_len, &d, &dlen) < 0
+		|| asn1_implicit_octet_string_from_der(1, shared_info1, shared_info1_len, &d, &dlen) < 0
+		|| asn1_implicit_octet_string_from_der(2, shared_info2, shared_info2_len, &d, &dlen) < 0
+		|| asn1_length_is_zero(dlen) != 1) {
 		error_print();
 		return -1;
 	}
 	return 1;
 }
 
-int cms_enveloped_data_print(FILE *fp, const uint8_t *a, size_t alen, int format, int indent)
+int cms_enced_content_info_print(FILE *fp, int fmt, int ind, const char *label, const uint8_t *d, size_t dlen)
 {
+	int ret, val;
+	const uint8_t *p;
+	size_t len;
 
-	const uint8_t *rcpt_infos;
-	size_t rcpt_infos_len;
-	int content_type;
-	int enc_algor;
-	const uint8_t *enc_iv;
-	const uint8_t *enced_content;
-	const uint8_t *shared_info1;
-	const uint8_t *shared_info2;
-	size_t enc_iv_len, enced_content_len, shared_info1_len, shared_info2_len;
+	format_print(fp, fmt, ind, "%s\n", label);
+	ind += 4;
 
+	if (cms_content_type_from_der(&val, &d, &dlen) != 1) goto err;
+	format_print(fp, fmt, ind, "contentType: %s\n", cms_content_type_name(val));
+	if (asn1_sequence_from_der(&p, &len, &d, &dlen) != 1) goto err;
+	x509_encryption_algor_print(fp, fmt, ind, "contentEncryptionAlgorithm", p, len);
+	if ((ret = asn1_implicit_octet_string_from_der(0, &p, &len, &d, &dlen)) < 0) goto err;
+	if (ret) format_bytes(fp, fmt, ind, "encryptedContent", d, dlen);
+	if ((ret = asn1_implicit_octet_string_from_der(1, &p, &len, &d, &dlen)) < 0) goto err;
+	if (ret) format_bytes(fp, fmt, ind, "sharedInfo1", d, dlen);
+	if ((ret = asn1_implicit_octet_string_from_der(2, &p, &len, &d, &dlen)) < 0) goto err;
+	if (ret) format_bytes(fp, fmt, ind, "sharedInfo2", d, dlen);
+	if (asn1_length_is_zero(dlen) != 1) goto err;
+	return 1;
+err:
+	error_print();
+	return -1;
+}
 
-	if (cms_enveloped_data_from_der(&rcpt_infos, &rcpt_infos_len,
-		&content_type, &enc_algor, &enc_iv, &enc_iv_len,
-		&enced_content, &enced_content_len,
-		&shared_info1, &shared_info1_len,
-		&shared_info2, &shared_info2_len,
-		&a, &alen) != 1) {
+int cms_enced_content_info_encrypt_to_der(
+	int content_type,
+	int enc_algor, const uint8_t *iv, size_t ivlen,
+	const uint8_t *content, size_t content_len,
+	const uint8_t *shared_info1, size_t shared_info1_len,
+	const uint8_t *shared_info2, size_t shared_info2_len,
+	const uint8_t *key, size_t keylen,
+	uint8_t **out, size_t *outlen)
+{
+	int ret;
+	SM4_KEY sm4_key;
+	uint8_t enced_content[32 + content_len];
+	size_t enced_content_len;
+
+	if (enc_algor != OID_sm4_cbc || keylen != 16 || ivlen != 16) {
 		error_print();
 		return -1;
 	}
 
-	// 这意味着我们在对应
+	sm4_set_encrypt_key(&sm4_key, key);
+	if (sm4_cbc_padding_encrypt(&sm4_key, iv, content, content_len,
+		enced_content, &enced_content_len) != 1) {
+		memset(&sm4_key, 0, sizeof(SM4_KEY));
+		error_print();
+		return -1;
+	}
+	memset(&sm4_key, 0, sizeof(SM4_KEY));
 
-
-	return -1;
+	if ((ret = cms_enced_content_info_to_der(content_type,
+		enc_algor, iv, ivlen, enced_content, enced_content_len,
+		shared_info1, shared_info1_len,
+		shared_info2, shared_info2_len,
+		out, outlen)) != 1) {
+		if (ret < 0) error_print();
+		return ret;
+	}
+	return 1;
 }
 
-int cms_enveloped_data_encrypt_to_der(const X509_CERTIFICATE *rcpt_certs, size_t rcpt_count,
-	int content_type, const uint8_t *content, size_t content_len,
+int cms_enced_content_info_decrypt_from_der(
+	int *content_type,
+	int *enc_algor, const uint8_t **iv, size_t *ivlen,
+	uint8_t *content, size_t *content_len,
+	const uint8_t **shared_info1, size_t *shared_info1_len,
+	const uint8_t **shared_info2, size_t *shared_info2_len,
+	const uint8_t *key, size_t keylen,
+	const uint8_t **in, size_t *inlen)
+{
+	int ret;
+	SM4_KEY sm4_key;
+	const uint8_t *enced_content;
+	size_t enced_content_len;
+
+	if ((ret = cms_enced_content_info_from_der(content_type,
+		enc_algor, iv, ivlen, &enced_content, &enced_content_len,
+		shared_info1, shared_info1_len,
+		shared_info2, shared_info2_len,
+		in, inlen)) != 1) {
+		if (ret < 0) error_print();
+		return ret;
+	}
+
+	if (*enc_algor != OID_sm4_cbc) {
+		error_print();
+		return -1;
+	}
+	if (*ivlen != SM4_BLOCK_SIZE) {
+		error_print();
+		return -1;
+	}
+	if (keylen != SM4_KEY_SIZE) {
+		error_print();
+		return -1;
+	}
+
+	sm4_set_decrypt_key(&sm4_key, key);
+	if (sm4_cbc_padding_decrypt(&sm4_key, *iv, enced_content, enced_content_len,
+		content, content_len) != 1) {
+		memset(&sm4_key, 0, sizeof(SM4_KEY));
+		return -1;
+	}
+	memset(&sm4_key, 0, sizeof(SM4_KEY));
+
+	return 1;
+}
+
+int cms_encrypted_data_to_der(
+	int version,
+	int content_type,
+	int enc_algor, const uint8_t *iv, size_t ivlen,
+	const uint8_t *enced_content, size_t enced_content_len,
 	const uint8_t *shared_info1, size_t shared_info1_len,
 	const uint8_t *shared_info2, size_t shared_info2_len,
 	uint8_t **out, size_t *outlen)
 {
 	size_t len = 0;
-	SM4_KEY sm4_key;
-	uint8_t enc_key[16];
-	uint8_t enc_iv[16];
-	uint8_t enced_key[rcpt_count][256 + 16];
-	size_t enced_key_len[rcpt_count];
-	uint8_t enced_content_info[content_len + 512];
-	size_t enced_content_info_len;
-	size_t i;
-
-	const SM2_KEY *sm2_key;
-
-	size_t rcpt_infos_len = 0;
-
-	rand_bytes(enc_key, 16);
-	rand_bytes(enc_iv, 16);
-
-	for (i = 0; i < rcpt_count; i++) {
-		// = x509_certificate_get_public_key(rcpt_certs[i]);
-		sm2_encrypt(sm2_key, enc_key, 16, enced_key[i], &enced_key_len[i]);
+	if (version != 1) {
+		error_print();
+		return -1;
 	}
-
-	for (i = 0; i < rcpt_count; i++) {
-		// 这个应该改为cms_recipient_info_from_x509
-		/*
-		x509_certificate_get_recipient_info(rcpt_cert,
-			&issuer,
-			&serial_number, &serial_number_len,
-			&sm2_key);
-
-		*/
-		/*
-		cms_recipient_info_encrypt_to_der(issuer,
-			serial_number, serial_number_len,
-			enced_key, enced_key_len,
-			NULL, &rcpt_infos_len);
-		*/
-	}
-
-
-
-	if (asn1_int_to_der(CMS_version, NULL, &len) != 1
-		|| asn1_set_to_der(NULL, rcpt_infos_len, NULL, &len) != 1
-		|| cms_enced_content_info_encrypt_to_der(&sm4_key, enc_iv,
-			content_type, content, content_len,
+	if (asn1_int_to_der(version, NULL, &len) != 1
+		|| cms_enced_content_info_to_der(
+			content_type,
+			enc_algor, iv, ivlen,
+			enced_content, enced_content_len,
+			shared_info1, shared_info1_len,
+			shared_info2, shared_info2_len,
+			NULL, &len) != 1
+		|| asn1_sequence_header_to_der(len, out, outlen) != 1
+		|| asn1_int_to_der(version, out, outlen) != 1
+		|| cms_enced_content_info_to_der(
+			content_type,
+			enc_algor, iv, ivlen,
+			enced_content, enced_content_len,
 			shared_info1, shared_info1_len,
 			shared_info2, shared_info2_len,
 			NULL, &len) != 1) {
 		error_print();
 		return -1;
 	}
-
-	if (asn1_sequence_header_to_der(len, out, outlen) != 1
-		|| asn1_int_to_der(CMS_version, out, outlen) != 1
-		|| asn1_set_header_to_der(rcpt_infos_len, out, outlen) != 1) {
-		error_print();
-		return -1;
-	}
-
-	const X509_NAME *issuer;
-	const uint8_t *serial_number;
-	size_t serial_number_len;
-
-	for (i = 0; i < rcpt_count; i++) {
-		if (cms_recipient_info_encrypt_to_der(sm2_key, issuer,
-			serial_number, serial_number_len,
-			enc_key, sizeof(enc_key), out, outlen) != 1) {
-			error_print();
-			return -1;
-		}
-	}
-
-	if (cms_enced_content_info_encrypt_to_der(&sm4_key, enc_iv,
-		content_type, content, content_len,
-		shared_info1, shared_info1_len,
-		shared_info2, shared_info2_len,
-		out, outlen) != 1) {
-		error_print();
-		return -1;
-	}
-
 	return 1;
 }
 
-int cms_enveloped_data_decrypt_from_der(const SM2_KEY *sm2_key, const X509_CERTIFICATE *cert,
-	const uint8_t *enveloped_data, size_t enveloped_data_len,
-	int *content_type, uint8_t *content, size_t *content_len)
-{
-/*
-	const uint8_t *rcpt_infos;
-	size_t rcpt_infos_len;
-	int enc_algor;
-	uint32_t enc_algor_nodes[32];
-	size_t enc_algor_nodes_count;
-	const uint8_t *enced_content;
-	size_t enced_content_len;
-	const uint8_t *shared_info1;
-	size_t shared_info1_len;
-	const uint8_t *shared_info2;
-	size_t shared_info2_len;
-	uint8_t enc_key[64];
-	size_t enc_key_len;
-
-	const uint8_t *enc_iv;
-	size_t enc_iv_len;
-
-	if (cms_enveloped_data_from_der(&rcpt_infos, &rcpt_infos_len,
-		content_type, &enc_algor, enc_algor_nodes, &enc_algor_nodes_count,
-		&enc_iv, &enc_iv_len,
-		&enced_content, &enced_content_len, &shared_info1, &shared_info1_len,
-		&shared_info2, &shared_info2_len, &enveloped_data, &enveloped_data_len) != 1
-		|| enced_content_info_len > 0) {
-		error_print();
-		return -1;
-	}
-	if (enc_algor != OID_sm4_cbc) {
-		error_print();
-		return -1;
-	}
-	if (!enc_iv || enc_iv_len != 16) {
-		error_print();
-		return -1;
-	}
-
-	while (rcpt_infos_len) {
-		X509_NAME issuer;
-		const uint8_t *serial_number;
-		size_t serial_number_len;
-		const uint8_t *enced_key;
-		size_t enced_key_len;
-
-		if (cms_recipient_info_from_der(&issuer, &serial_number, &serial_number_len
-			&enced_key, &enced_key_len, &rcpt_infos, &rcpt_infos_len) != 1) {
-			error_print();
-			return -1;
-		}
-		if (cms_issuer_and_serial_number_match_certificate(&issuer,
-			serial_number, serial_number_len, cert) != 1) {
-			break;
-		}
-		if (sm2_decrypt(sm2_key, enced_key, enced_key_len, enc_key, &enc_key_len) != 1) {
-			error_print();
-			return -1;
-		}
-	}
-
-	sm4_set_decrypt_key(&sm4_key, enc_key);
-	if (sm4_cbc_paddnig_decrypt(&sm4_key, enc_iv, enced_content, enced_content_len,
-		content, content_len) != 1) {
-		error_print();
-		return -1;
-	}
-*/
-	return -1;
-}
-
-
-// 注意，由于SignedData中包含ContentInfo，因此需要提前给出ContentInfo的基本编解码
-
-/*
-ContentType OIDs
- */
-
-static const uint32_t OID_cms_data[]				= {1,2,156,10197,6,1,4,2,1};
-static const uint32_t OID_cms_signed_data[]			= {1,2,156,10197,6,1,4,2,2};
-static const uint32_t OID_cms_enveloped_data[]			= {1,2,156,10197,6,1,4,2,3};
-static const uint32_t OID_cms_signed_and_enveloped_data[]	= {1,2,156,10197,6,1,4,2,4};
-static const uint32_t OID_cms_encrypted_data[]			= {1,2,156,10197,6,1,4,2,5};
-static const uint32_t OID_cms_key_agreement_info[]		= {1,2,156,10197,6,1,4,2,6};
-
-
-const char *cms_content_type_name(int type)
-{
-	switch (type) {
-	case CMS_data: return "data";
-	case CMS_signed_data: return "signedData";
-	case CMS_enveloped_data: return "envelopedData";
-	case CMS_signed_and_enveloped_data: return "signedAndEnvelopedData";
-	case CMS_encrypted_data: return "encryptedData";
-	case CMS_key_agreement_info: return "keyAgreementInfo";
-	}
-	return NULL;
-}
-
-int cms_content_type_to_der(int type, uint8_t **out, size_t *outlen)
-{
-	uint32_t cms_nodes[9] = {1,2,156,10197,6,1,4,2,0};
-
-	if (!cms_content_type_name(type)) {
-		error_print();
-		return -1;
-	}
-	cms_nodes[8] = type;
-	if (asn1_object_identifier_to_der(OID_undef, cms_nodes, 9, out, outlen) != 1) {
-		error_print();
-		return -1;
-	}
-	return 1;
-}
-
-int cms_content_type_from_der(int *type, const uint8_t **in, size_t *inlen)
-{
-	const uint32_t cms_nodes[] = {1,2,156,10197,6,1,4,2,0};
-	int ret;
-
-	uint32_t nodes[32];
-	size_t nodes_count;
-
-	if (( ret = asn1_object_identifier_from_der(type, nodes, &nodes_count, in, inlen)) != 1) {
-		if (ret < 0) error_print();
-		return ret;
-	}
-
-	if (*type == OID_undef) {
-		if (nodes_count != 9) {
-			error_print();
-			return -1;
-		}
-		if (memcmp(nodes, cms_nodes, 8) != 0) {
-			error_print();
-			return -1;
-		}
-		if (cms_content_type_name(nodes[8]) == NULL) {
-			error_print();
-			return -1;
-		}
-		*type = nodes[8];
-	}
-	return 1;
-}
-
-
-/*
-ContentInfo ::= SEQUENCE {
-	contentType			OBJECT IDENTIFIER,
-	content				[0] EXPLICIT ANY OPTIONAL
-}
-*/
-
-int cms_content_info_to_der(int content_type, const uint8_t *content, size_t content_len,
-	uint8_t **out, size_t *outlen)
-{
-	size_t len = 0;
-
-	if (cms_content_type_to_der(content_type, NULL, &len) != 1
-		|| asn1_explicit_to_der(0, content, content_len, NULL, &len) != 1
-		|| asn1_sequence_header_to_der(len, out, outlen) != 1
-		|| cms_content_type_to_der(content_type, out, outlen) != 1
-		|| asn1_explicit_to_der(0, content, content_len, out, outlen) != 1) {
-		error_print();
-		return -1;
-	}
-	return 1;
-}
-
-int cms_content_info_from_der(int *content_type, const uint8_t **content, size_t *content_len,
+int cms_encrypted_data_from_der(
+	int *version,
+	int *content_type,
+	int *enc_algor, const uint8_t **iv, size_t *ivlen,
+	const uint8_t **enced_content, size_t *enced_content_len,
+	const uint8_t **shared_info1, size_t *shared_info1_len,
+	const uint8_t **shared_info2, size_t *shared_info2_len,
 	const uint8_t **in, size_t *inlen)
 {
 	int ret;
-	const uint8_t *data;
-	size_t datalen;
+	const uint8_t *d;
+	size_t dlen;
 
-	if ((ret = asn1_sequence_from_der(&data, &datalen, in, inlen)) != 1) {
+	if ((ret = asn1_sequence_from_der(&d, &dlen, in, inlen)) != 1) {
 		if (ret < 0) error_print();
 		return ret;
 	}
-	if (cms_content_type_from_der(content_type, &data, &datalen) != 1
-		|| asn1_explicit_from_der(0, content, content_len, &data, &datalen) != 1
-		|| datalen > 0) {
+	if (asn1_int_from_der(version, &d, &dlen) != 1
+		|| cms_enced_content_info_from_der(
+			content_type,
+			enc_algor, iv, ivlen,
+			enced_content, enced_content_len,
+			shared_info1, shared_info1_len,
+			shared_info2, shared_info2_len,
+			&d, &dlen) != 1
+		|| asn1_length_is_zero(dlen) != 1) {
+		error_print();
+		return -1;
+	}
+	if (*version != 1) {
 		error_print();
 		return -1;
 	}
 	return 1;
 }
 
+int cms_encrypted_data_print(FILE *fp, int fmt, int ind, const char *label, const uint8_t *d, size_t dlen)
+{
+	int val;
+	const uint8_t *p;
+	size_t len;
 
-/*
-SignerInfo ::= SEQUENCE {
-	version				INTEGER (1),
-	issuerAndSerialNumber		IssuerAndSerialNumber,
-	digestAlgorithm			AlgorithmIdentifier,
-	authenticatedAttributes		[0] IMPLICIT SET OF Attribute OPTINOAL,
-	digestEncryptionAlgorithm	AlgorithmIdentifier,
-	encryptedDigest			OCTET STRING,
-	unauthenticatedAttributes       [1] IMPLICIT SET OF Attribute OPTINOAL,
+	format_print(fp, fmt, ind, "%s\n", label);
+	ind += 4;
+
+	if (asn1_int_from_der(&val, &d, &dlen) != 1) goto err;
+	format_print(fp, fmt, ind, "version: %d\n", val);
+	if (asn1_sequence_from_der(&p, &len, &d, &dlen) != 1) goto err;
+	cms_enced_content_info_print(fp, fmt, ind, "encryptedContentInfo", p, len);
+	if (asn1_length_is_zero(dlen) != 1) goto err;
+	return 1;
+err:
+	error_print();
+	return -1;
 }
-*/
+
+int cms_encrypted_data_encrypt_to_der(
+	int version,
+	int content_type,
+	int enc_algor, const uint8_t *iv, size_t ivlen,
+	const uint8_t *content, size_t content_len,
+	const uint8_t *shared_info1, size_t shared_info1_len,
+	const uint8_t *shared_info2, size_t shared_info2_len,
+	const uint8_t *key, size_t keylen,
+	uint8_t **out, size_t *outlen)
+{
+	size_t len = 0;
+	if (asn1_int_to_der(version, NULL, &len) != 1
+		|| cms_enced_content_info_encrypt_to_der(
+			content_type,
+			enc_algor, iv, ivlen,
+			content, content_len,
+			shared_info1, shared_info1_len,
+			shared_info2, shared_info2_len,
+			key, keylen,
+			NULL, &len) != 1
+		|| asn1_sequence_header_to_der(len, out, outlen) != 1
+		|| asn1_int_to_der(version, out, outlen) != 1
+		|| cms_enced_content_info_encrypt_to_der(
+			content_type,
+			enc_algor, iv, ivlen,
+			content, content_len,
+			shared_info1, shared_info1_len,
+			shared_info2, shared_info2_len,
+			key, keylen,
+			out, outlen) != 1) {
+		error_print();
+		return -1;
+	}
+	return 1;
+}
+
+int cms_encrypted_data_decrypt_from_der(
+	int *version,
+	int *content_type,
+	int *enc_algor, const uint8_t **iv, size_t *ivlen,
+	uint8_t *content, size_t *content_len,
+	const uint8_t **shared_info1, size_t *shared_info1_len,
+	const uint8_t **shared_info2, size_t *shared_info2_len,
+	const uint8_t *key, size_t keylen,
+	const uint8_t **in, size_t *inlen)
+{
+	int ret;
+	const uint8_t *d;
+	size_t dlen;
+
+	if ((ret = asn1_sequence_from_der(&d, &dlen, in, inlen)) != 1) {
+		if (ret < 0) error_print();
+		return ret;
+	}
+	if (asn1_int_from_der(version, &d, &dlen) != 1
+		|| cms_enced_content_info_decrypt_from_der(
+			content_type,
+			enc_algor, iv, ivlen,
+			content, content_len,
+			shared_info1, shared_info1_len,
+			shared_info2, shared_info2_len,
+			key, keylen,
+			&d, &dlen) != 1
+		|| asn1_length_is_zero(dlen) != 1) {
+		error_print();
+		return -1;
+	}
+	if (*version != 1) {
+		error_print();
+		return -1;
+	}
+	return 1;
+}
+
+int cms_issuer_and_serial_number_to_der(
+	const uint8_t *issuer, size_t issuer_len,
+	const uint8_t *serial_number, size_t serial_number_len,
+	uint8_t **out, size_t *outlen)
+{
+	size_t len = 0;
+	if (asn1_sequence_to_der(issuer, issuer_len, NULL, &len) != 1
+		|| asn1_integer_to_der(serial_number, serial_number_len, NULL, &len) != 1
+		|| asn1_sequence_header_to_der(len, out, outlen) != 1
+		|| asn1_sequence_to_der(issuer, issuer_len, out, outlen) != 1
+		|| asn1_integer_to_der(serial_number, serial_number_len, out, outlen) != 1) {
+		error_print();
+		return -1;
+	}
+	return 1;
+}
+
+int cms_issuer_and_serial_number_from_der(
+	const uint8_t **issuer, size_t *issuer_len,
+	const uint8_t **serial_number, size_t *serial_number_len,
+	const uint8_t **in, size_t *inlen)
+{
+	int ret;
+	const uint8_t *d;
+	size_t dlen;
+
+	if ((ret = asn1_sequence_from_der(&d, &dlen, in, inlen)) != 1) {
+		if (ret < 0) error_print();
+		return ret;
+	}
+	if (asn1_sequence_from_der(issuer, issuer_len, &d, &dlen) != 1
+		|| asn1_integer_from_der(serial_number, serial_number_len, &d, &dlen) != 1
+		|| asn1_length_is_zero(dlen) != 1) {
+		error_print();
+		return -1;
+	}
+	return 1;
+}
+
+int cms_issuer_and_serial_number_print(FILE *fp, int fmt, int ind, const char *label, const uint8_t *d, size_t dlen)
+{
+	const uint8_t *p;
+	size_t len;
+
+	format_print(fp, fmt, ind, "%s\n", label);
+	ind += 4;
+
+	if (asn1_sequence_from_der(&p, &len, &d, &dlen) != 1) goto err;
+	x509_name_print(fp, fmt, ind, "issuer", p, len);
+	if (asn1_integer_from_der(&p, &len, &d, &dlen) != 1) goto err;
+	format_bytes(fp, fmt, ind, "serialNumber", p, len);
+	if (asn1_length_is_zero(dlen) != 1) goto err;
+	return 1;
+err:
+	error_print();
+	return -1;
+}
 
 int cms_signer_info_to_der(
-	const X509_NAME *issuer,
+	int version,
+	const uint8_t *issuer, size_t issuer_len,
 	const uint8_t *serial_number, size_t serial_number_len,
 	int digest_algor,
 	const uint8_t *authed_attrs, size_t authed_attrs_len,
+	int signature_algor,
 	const uint8_t *enced_digest, size_t enced_digest_len,
 	const uint8_t *unauthed_attrs, size_t unauthed_attrs_len,
 	uint8_t **out, size_t *outlen)
 {
 	size_t len = 0;
-
-	if (asn1_int_to_der(CMS_version, NULL, &len) != 1
-		|| cms_issuer_and_serial_number_to_der(issuer, serial_number, serial_number_len, NULL, &len) != 1
-		|| x509_digest_algor_to_der(OID_sm3, NULL, &len) != 1
+	if (version != 1) {
+		error_print();
+		return -1;
+	}
+	if (asn1_int_to_der(version, NULL, &len) != 1
+		|| cms_issuer_and_serial_number_to_der(
+			issuer, issuer_len,
+			serial_number, serial_number_len, NULL, &len) != 1
+		|| x509_digest_algor_to_der(digest_algor, NULL, &len) != 1
 		|| asn1_implicit_set_to_der(0, authed_attrs, authed_attrs_len, NULL, &len) < 0
-		|| x509_signature_algor_to_der(OID_sm2sign_with_sm3, NULL, &len) != 1
+		|| x509_signature_algor_to_der(signature_algor, NULL, &len) != 1
 		|| asn1_octet_string_to_der(enced_digest, enced_digest_len, NULL, &len) != 1
-		|| asn1_implicit_set_to_der(1, unauthed_attrs, unauthed_attrs_len, NULL, &len) < 0) {
-		error_print();
-		return -1;
-	}
-	if (asn1_sequence_header_to_der(len, out, outlen) != 1
-		|| asn1_int_to_der(CMS_version, out, outlen) != 1
-		|| cms_issuer_and_serial_number_to_der(issuer, serial_number, serial_number_len, out, outlen) != 1
-		|| x509_digest_algor_to_der(OID_sm3, out, outlen) != 1) {
-		error_print();
-		return -1;
-	}
-	if (0
-		|| asn1_implicit_set_to_der(0, authed_attrs, authed_attrs_len, out, outlen) < 0) {
-		error_print();
-		return -1;
-	}
-	if (0
-		|| x509_signature_algor_to_der(OID_sm2sign_with_sm3, out, outlen) != 1) {
-		error_print();
-		return -1;
-	}
-	if (0
+		|| asn1_implicit_set_to_der(1, unauthed_attrs, unauthed_attrs_len, NULL, &len) < 0
+		|| asn1_sequence_header_to_der(len, out, outlen) != 1
+		|| asn1_int_to_der(version, out, outlen) != 1
+		|| cms_issuer_and_serial_number_to_der(
+			issuer, issuer_len,
+			serial_number, serial_number_len, out, outlen) != 1
+		|| x509_digest_algor_to_der(digest_algor, out, outlen) != 1
+		|| asn1_implicit_set_to_der(0, authed_attrs, authed_attrs_len, out, outlen) < 0
+		|| x509_signature_algor_to_der(signature_algor, out, outlen) != 1
 		|| asn1_octet_string_to_der(enced_digest, enced_digest_len, out, outlen) != 1
 		|| asn1_implicit_set_to_der(1, unauthed_attrs, unauthed_attrs_len, out, outlen) < 0) {
 		error_print();
@@ -1103,93 +596,96 @@ int cms_signer_info_to_der(
 	return 1;
 }
 
-int cms_signer_info_from_der(X509_NAME *issuer,
+int cms_signer_info_from_der(
+	int *version,
+	const uint8_t **issuer, size_t *issuer_len,
 	const uint8_t **serial_number, size_t *serial_number_len,
 	int *digest_algor,
 	const uint8_t **authed_attrs, size_t *authed_attrs_len,
-	int *sign_algor,
+	int *signature_algor,
 	const uint8_t **enced_digest, size_t *enced_digest_len,
 	const uint8_t **unauthed_attrs, size_t *unauthed_attrs_len,
 	const uint8_t **in, size_t *inlen)
 {
 	int ret;
-	const uint8_t *data;
-	size_t datalen;
-	int version;
-	uint32_t nodes[32];
-	size_t nodes_count;
+	const uint8_t *d;
+	size_t dlen;
 
-	if ((ret = asn1_sequence_from_der(&data, &datalen, in, inlen)) != 1) {
+	if ((ret = asn1_sequence_from_der(&d, &dlen, in, inlen)) != 1) {
 		if (ret < 0) error_print();
 		return ret;
 	}
-	if (asn1_int_from_der(&version, &data, &datalen) != 1
-		|| cms_issuer_and_serial_number_from_der(issuer, serial_number, serial_number_len, &data, &datalen) != 1
-		|| x509_digest_algor_from_der(digest_algor, nodes, &nodes_count, &data, &datalen) != 1
-		|| asn1_implicit_set_from_der(0, authed_attrs, authed_attrs_len, &data, &datalen) < 0
-		|| x509_signature_algor_from_der(sign_algor, nodes, &nodes_count, &data, &datalen) != 1
-		|| asn1_octet_string_from_der(enced_digest, enced_digest_len, &data, &datalen) != 1
-		|| asn1_implicit_set_from_der(1, unauthed_attrs, unauthed_attrs_len, &data, &datalen) < 0
-		|| datalen) {
+	if (asn1_int_from_der(version, &d, &dlen) != 1
+		|| cms_issuer_and_serial_number_from_der(issuer, issuer_len,
+			serial_number, serial_number_len, &d, &dlen) != 1
+		|| x509_digest_algor_from_der(digest_algor, &d, &dlen) != 1
+		|| asn1_implicit_set_from_der(0, authed_attrs, authed_attrs_len, &d, &dlen) < 0
+		|| x509_signature_algor_from_der(signature_algor, &d, &dlen) != 1
+		|| asn1_octet_string_from_der(enced_digest, enced_digest_len, &d, &dlen) != 1
+		|| asn1_implicit_set_from_der(1, unauthed_attrs, unauthed_attrs_len, &d, &dlen) < 0
+		|| asn1_length_is_zero(dlen) != 1) {
 		error_print();
 		return -1;
 	}
 	return 1;
 }
 
-int cms_signer_info_print(FILE *fp, const uint8_t *a, size_t alen, int format, int indent)
+int cms_signer_info_print(FILE *fp, int fmt, int ind, const char *label, const uint8_t *d, size_t dlen)
 {
-	/*
-	int ret;
-	const uint8_t *data;
-	size_t datalen;
-	int version;
-	X509_NAME issuer;
+	int ret, val;
+	const uint8_t *p;
+	size_t len;
 
-	if ((ret = asn1_sequence_from_der(&data, &datalen, in, inlen)) != 1) {
-		if (ret < 0) error_print();
-		return ret;
-	}
-	format_print(fp, format, indent, "SignerInfo:\n");
-	indent += 4;
+	format_print(fp, fmt, ind, "%s\n", label);
+	ind += 4;
 
-	if (asn1_int_from_der(&version, &data, &datalen) != 1) goto bad;
-	format_print(fp, format, indent, "Version: %d\n", version);
-
-	if (cms_issuer_and_serial_number_from_der(&issuer, &serial_number, &serial_number_len, &data, &datalen) != 1) goto bad;
-	cms_issuer_and_serial_number_print(); // 这个不能这么弄啊！
-
-	*/
+	if (asn1_int_from_der(&val, &d, &dlen) != 1) goto err;
+	format_print(fp, fmt, ind, "version: %d\n", val);
+	if (asn1_sequence_from_der(&p, &len, &d, &dlen) != 1) goto err;
+	cms_issuer_and_serial_number_print(fp, fmt, ind, "issuerAndSerialNumber", p, len);
+	if (x509_digest_algor_from_der(&val, &d, &dlen) != 1) goto err;
+	format_print(fp, fmt, ind, "digestAlgorithm: %s\n", x509_digest_algor_name(val));
+	if ((ret = asn1_implicit_set_from_der(0, &p, &len, &d, &dlen)) != 1) goto err;
+	if (ret) x509_attributes_print(fp, fmt, ind, "authenticatedAttributes", p, len);
+	if (x509_signature_algor_from_der(&val, &d, &dlen) != 1) goto err;
+	format_print(fp, fmt, ind, "digestEncryptionAlgorithm: %s\n", x509_signature_algor_name(val));
+	if (asn1_octet_string_from_der(&p, &len, &d, &dlen) != 1) goto err;
+	format_bytes(fp, fmt, ind, "encryptedDigest", p, len);
+	if ((ret = asn1_implicit_set_from_der(1, &p, &len, &d, &dlen)) != 1) goto err;
+	if (ret) x509_attributes_print(fp, fmt, ind, "unauthenticatedAttributes", p, len);
+	if (asn1_length_is_zero(dlen) != 1) goto err;
 	return 1;
+err:
+	error_print();
+	return -1;
 }
 
-int cms_signer_info_sign_to_der(const SM2_KEY *sm2_key, const SM3_CTX *sm3_ctx,
-	const X509_NAME *issuer, const uint8_t *serial_number, size_t serial_number_len,
+int cms_signer_info_sign_to_der(
+	int version,
+	const uint8_t *issuer, size_t issuer_len,
+	const uint8_t *serial_number, size_t serial_number_len,
 	const uint8_t *authed_attrs, size_t authed_attrs_len,
 	const uint8_t *unauthed_attrs, size_t unauthed_attrs_len,
+	const SM3_CTX *sm3_ctx, const SM2_KEY *sign_key,
 	uint8_t **out, size_t *outlen)
 {
-	SM3_CTX ctx;
-	uint8_t dgst[32];
+	SM3_CTX ctx = *sm3_ctx;
+	uint8_t dgst[SM3_DIGEST_SIZE];
 	uint8_t sig[SM2_MAX_SIGNATURE_SIZE];
-	size_t sig_len;
+	size_t siglen;
 
-	memcpy(&ctx, sm3_ctx, sizeof(SM3_CTX));
-	if (authed_attrs) {
-		uint8_t header[8];
-		uint8_t *p = header;
-		size_t header_len = 0;
-		asn1_set_header_to_der(authed_attrs_len, &p, &header_len);
-		sm3_update(&ctx, header, header_len);
-		sm3_update(&ctx, authed_attrs, authed_attrs_len);
-	}
+	sm3_update(&ctx, authed_attrs, authed_attrs_len);
 	sm3_finish(&ctx, dgst);
-	sm2_sign(sm2_key, dgst, sig, &sig_len);
+	if (sm2_sign(sign_key, dgst, sig, &siglen) != 1) {
+		error_print();
+		return -1;
+	}
 
-	if (cms_signer_info_to_der(issuer, serial_number, serial_number_len,
-		OID_sm3, authed_attrs, authed_attrs_len, sig, sig_len,
-		unauthed_attrs, unauthed_attrs_len,
-		out, outlen) != 1) {
+	if (cms_signer_info_to_der(version,
+		issuer, issuer_len, serial_number, serial_number_len,
+		OID_sm3, authed_attrs, authed_attrs_len,
+		OID_sm2sign_with_sm3, sig, siglen,
+		unauthed_attrs, unauthed_attrs_len, out, outlen) != 1) {
 		error_print();
 		return -1;
 	}
@@ -1197,145 +693,180 @@ int cms_signer_info_sign_to_der(const SM2_KEY *sm2_key, const SM3_CTX *sm3_ctx,
 }
 
 int cms_signer_info_verify_from_der(
-	const SM2_KEY *sm2_key, const SM3_CTX *sm3_ctx,
-	X509_NAME *issuer, const uint8_t **serial_number, size_t *serial_number_len,
-	int *digest_algor, uint32_t *digest_algor_nodes, size_t *digest_algor_nodes_count,
+	int *version,
+	const uint8_t **issuer, size_t *issuer_len,
+	const uint8_t **serial_number, size_t *serial_number_len,
+	int *digest_algor,
 	const uint8_t **authed_attrs, size_t *authed_attrs_len,
-	int *sign_algor, uint32_t *sign_algor_nodes, size_t *sign_algor_nodes_count,
+	int *signature_algor,
+	const uint8_t **enced_digest, size_t *enced_digest_len,
 	const uint8_t **unauthed_attrs, size_t *unauthed_attrs_len,
+	const SM3_CTX *sm3_ctx, const SM2_KEY *sign_pub_key,
 	const uint8_t **in, size_t *inlen)
 {
 	int ret;
-	SM3_CTX ctx;
-	uint8_t dgst[32];
-	const uint8_t *sig;
-	size_t sig_len;
+	SM3_CTX ctx = *sm3_ctx;
+	uint8_t dgst[SM3_DIGEST_SIZE];
 
-	if (cms_signer_info_from_der(issuer, serial_number, serial_number_len,
-		digest_algor,
-		authed_attrs, authed_attrs_len,
-		sign_algor,
-		&sig, &sig_len,
-		unauthed_attrs, unauthed_attrs_len,
-		in, inlen) != 1) {
-		error_print();
-		return -1;
+	if ((ret = cms_signer_info_from_der(version,
+		issuer, issuer_len, serial_number, serial_number_len,
+		digest_algor, authed_attrs, authed_attrs_len,
+		signature_algor, enced_digest, enced_digest_len,
+		unauthed_attrs, unauthed_attrs_len, in, inlen)) != 1) {
+		if (ret < 0) error_print();
+		return ret;
 	}
-	if (*digest_algor != OID_sm3) {
-		error_print();
-		return -1;
-	}
-	if (*sign_algor != OID_sm2sign_with_sm3) {
+	if (*digest_algor != OID_sm3
+		|| *signature_algor != OID_sm2sign_with_sm3) {
 		error_print();
 		return -1;
 	}
 
-	memcpy(&ctx, sm3_ctx, sizeof(SM3_CTX));
-	if (*authed_attrs) {
-		uint8_t header[8];
-		uint8_t *p = header;
-		size_t header_len = 0;
-		asn1_set_header_to_der(*authed_attrs_len, &p, &header_len);
-		sm3_update(&ctx, header, header_len);
-		sm3_update(&ctx, *authed_attrs, *authed_attrs_len);
-	}
+	sm3_update(&ctx, *authed_attrs, *authed_attrs_len);
 	sm3_finish(&ctx, dgst);
 
-	if ((ret = sm2_verify(sm2_key, dgst, sig, sig_len)) != 1) {
-		error_print();
-		return -1;
+	if ((ret = sm2_verify(sign_pub_key, dgst, *enced_digest, *enced_digest_len)) != 1) {
+		if (ret < 0) error_print();
+		else error_print();
+		return ret;
 	}
 	return ret;
 }
 
-/*
-SignedData ::= SEQUENCE {
-	version			INTEGER (1),
-	digestAlgorithms	SET OF AlgorithmIdentifier,
-	contentInfo		ContentInfo,
-	certificates		[0] IMPLICIT SET OF Certificate OPTIONAL,
-	crls			[1] IMPLICIT SET OF CertificateRevocationList OPTIONAL,
-	signerInfos		SET OF SignerInfo
+int cms_signer_infos_add_signer_info(
+	uint8_t *d, size_t *dlen, size_t maxlen,
+	int version,
+	const uint8_t *issuer, size_t issuer_len,
+	const uint8_t *serial_number, size_t serial_number_len,
+	const uint8_t *authed_attrs, size_t authed_attrs_len,
+	const uint8_t *unauthed_attrs, size_t unauthed_attrs_len,
+	const SM3_CTX *sm3_ctx, const SM2_KEY *sign_key)
+{
+	return -1;
 }
-*/
 
-int cms_signed_data_to_der(
-	const int *digest_algors, const size_t digest_algors_count,
-	const int content_type, const uint8_t *content, const size_t content_len,
-	const X509_CERTIFICATE *certs, size_t certs_count,
-	const uint8_t **crls, const size_t *crls_lens, const size_t crls_count,
-	const uint8_t **signer_infos, size_t *signer_infos_lens, size_t signer_infos_count,
+int cms_signer_infos_print(FILE *fp, int fmt, int ind, const char *label, const uint8_t *d, size_t dlen)
+{
+	const uint8_t *p;
+	size_t len;
+
+	format_print(fp, fmt, ind, "%s\n", label);
+	ind += 4;
+
+	while (dlen) {
+		if (asn1_sequence_from_der(&p, &len, &d, &dlen) != 1) {
+			error_print();
+			return -1;
+		}
+		cms_signer_info_print(fp, fmt, ind, "SignerInfo", p, len);
+	}
+	return 1;
+}
+
+int cms_crls_add_crl(uint8_t *d, size_t *dlen, size_t maxlen, const uint8_t *crl, size_t crllen)
+{
+	return -1;
+}
+
+int cms_crls_print(FILE *fp, int fmt, int ind, const char *label, const uint8_t *d, size_t dlen)
+{
+	const uint8_t *p;
+	size_t len;
+
+	format_print(fp, fmt, ind, "%s\n", label);
+	ind += 4;
+
+	while (dlen) {
+		if (asn1_sequence_from_der(&p, &len, &d, &dlen) != 1) {
+			error_print();
+			return -1;
+		}
+		x509_cert_list_print(fp, fmt, ind, "CertificateRevocationList", p, len);
+	}
+	return 1;
+}
+
+int cms_extened_certs_add_cert(uint8_t *d, size_t *dlen, size_t maxlen, const uint8_t *cert, size_t certlen)
+{
+	return -1;
+}
+
+int cms_extended_certs_print(FILE *fp, int fmt, int ind, const char *label, const uint8_t *d, size_t dlen)
+{
+	// 注意：这里可能需要解析ExtendedCertificateAndCertificate
+	return -1;
+}
+
+int cms_digest_algors_to_der(const int *digest_algors, size_t digest_algors_cnt,
 	uint8_t **out, size_t *outlen)
 {
-	size_t len = 0;
-	size_t digest_algors_len = 0;
-	size_t certs_len = 0;
-	size_t crls_len = 0;
-	size_t signer_infos_len = 0;
-	int i;
-
-	/*
-	for (i = 0; i < digest_algors_count; i++)
-		x509_digest_algor_to_der(digest_algors[i], NULL, &digest_algors_len);
-	for (i = 0; i < certs_count; i++)
-		x509_certificate_to_der(&certs[i], NULL, &certs_len);
-	for (i = 0; i < crls_count; i++)
-		crls_len += crls_lens[i];
-	for (i = 0; i < signer_infos_count; i++)
-		signer_infos_len += signer_infos_lens[i];
-
-	if (asn1_int_to_der(CMS_version, NULL, &len) != 1
-		|| asn1_set_to_der(NULL, digest_algors_len, NULL, &len) != 1
-		|| cms_content_info_to_der(content_type, content, content_len, NULL, &len) != 1
-		|| asn1_implicit_set_to_der(0, NULL, certs_len, NULL, &len) < 0
-		|| asn1_implicit_set_to_der(1, NULL, crls_len, NULL, &len) < 0
-		|| asn1_set_to_der(NULL, signer_infos_len, NULL, &len) != 1) {
+	size_t len = 0, i;
+	for (i = 0; i < digest_algors_cnt; i++) {
+		if (x509_digest_algor_to_der(digest_algors[i], NULL, &len) != 1) {
+			error_print();
+			return -1;
+		}
+	}
+	if (asn1_set_header_to_der(len, out, outlen) != 1) {
 		error_print();
 		return -1;
 	}
-
-	if (asn1_sequence_to_der(len, out, outlen) != 1
-		|| asn1_int_to_der(CMS_version, out, outlen) != 1
-		|| asn1_set_header_to_der(digest_algors_len, out, outlen) != 1) {
-		error_print();
-		return -1;
-	}
-	for (i = 0; i < digest_algors_count; i++) {
+	for (i = 0; i < digest_algors_cnt; i++) {
 		if (x509_digest_algor_to_der(digest_algors[i], out, outlen) != 1) {
 			error_print();
 			return -1;
 		}
 	}
-	if (cms_content_info_to_der(content_type, content, content_len, out, outlen) != 1) {
-		error_print();
-		return -1;
-	}
-	if (certs) {
-		if (asn1_implicit_set_header_to_der(0, certs_len, out, outlen) != 1) {
-			error_print();
-			return -1;
-		}
-		for (i = 0; i < certs_count; i++) {
-		}
-	}
-	if (crls) {
-		for (i = 0; i < crls_count; i++) {
-		}
-	}
+	return 1;
+}
 
-
-	if (asn1_set_to_der(signer_infos_len, out, outlen) != 1) {
-	}
-	for (i = 0; i < signer_infos_count; i++) {
-		asn1_data_to_der(signer_infos[i], signer_infos_lens[i], out, outlen);
-	}
-
-	*/
+int cms_digest_algors_from_der(int *digest_algors, size_t *digest_algors_cnt, size_t max_digest_algors,
+	const uint8_t **in, size_t *inlen)
+{
 	return -1;
 }
 
+int cms_digest_algors_print(FILE *fp, int fmt, int ind, const char *label, const uint8_t *d, size_t dlen)
+{
+	return -1;
+}
+
+int cms_signed_data_to_der(
+	int version,
+	const int *digest_algors, size_t digest_algors_cnt,
+	const int content_type, const uint8_t *content, const size_t content_len,
+	const uint8_t *certs, size_t certs_len,
+	const uint8_t *crls, const size_t crls_len,
+	const uint8_t *signer_infos, size_t signer_infos_len,
+	uint8_t **out, size_t *outlen)
+{
+	size_t len = 0;
+	if (version != 1) {
+		error_print();
+		return -1;
+	}
+	if (asn1_int_to_der(version, NULL, &len) != 1
+		|| cms_digest_algors_to_der(digest_algors, digest_algors_cnt, NULL, &len) != 1
+		|| cms_content_info_to_der(content_type, content, content_len, NULL, &len) != 1
+		|| asn1_implicit_set_to_der(0, certs, certs_len, NULL, &len) < 0
+		|| asn1_implicit_set_to_der(1, crls, crls_len, NULL, &len) < 0
+		|| cms_signer_infos_to_der(signer_infos, signer_infos_len, NULL, &len) != 1
+		|| asn1_sequence_header_to_der(len, out, outlen) != 1
+		|| asn1_int_to_der(version, out, outlen) != 1
+		|| cms_digest_algors_to_der(digest_algors, digest_algors_cnt, out, outlen) != 1
+		|| cms_content_info_to_der(content_type, content, content_len, out, outlen) != 1
+		|| asn1_implicit_set_to_der(0, certs, certs_len, out, outlen) < 0
+		|| asn1_implicit_set_to_der(1, crls, crls_len, out, outlen) < 0
+		|| cms_signer_infos_to_der(signer_infos, signer_infos_len, out, outlen) != 1) {
+		error_print();
+		return -1;
+	}
+	return 1;
+}
+
 int cms_signed_data_from_der(
-	const uint8_t **digest_algors, size_t *digest_algors_len,
+	int *version,
+	int *digest_algors, size_t *digest_algors_cnt, size_t max_digest_algors,
 	int *content_type, const uint8_t **content, size_t *content_len,
 	const uint8_t **certs, size_t *certs_len,
 	const uint8_t **crls, size_t *crls_len,
@@ -1343,514 +874,607 @@ int cms_signed_data_from_der(
 	const uint8_t **in, size_t *inlen)
 {
 	int ret;
-	const uint8_t *data;
-	size_t datalen;
-	int version;
+	const uint8_t *d;
+	size_t dlen;
 
-	if ((ret = asn1_sequence_from_der(&data, &datalen, in, inlen)) != 1) {
+	if ((ret = asn1_sequence_from_der(&d, &dlen, in, inlen)) != 1) {
 		if (ret < 0) error_print();
 		return ret;
 	}
-	if (asn1_int_from_der(&version, &data, &datalen) != 1
-		|| asn1_set_from_der(digest_algors, digest_algors_len, &data, &datalen) != 1
-		|| cms_content_info_from_der(content_type, content, content_len, &data, &datalen) != 1
-		|| asn1_implicit_set_from_der(0, certs, certs_len, &data, &datalen) < 0
-		|| asn1_implicit_set_from_der(1, crls, crls_len, &data, &datalen) < 0
-		|| asn1_set_from_der(signer_infos, signer_infos_len, &data, &datalen) != 1
-		|| datalen) {
+	if (asn1_int_from_der(version, &d, &dlen) != 1
+		|| cms_digest_algors_from_der(digest_algors, digest_algors_cnt, max_digest_algors, &d, &dlen) != 1
+		|| cms_content_info_from_der(content_type, content, content_len, &d, &dlen) != 1
+		|| asn1_implicit_set_from_der(0, certs, certs_len, &d, &dlen) < 0
+		|| asn1_implicit_set_from_der(1, crls, crls_len, &d, &dlen) < 0
+		|| asn1_set_from_der(signer_infos, signer_infos_len, &d, &dlen) != 1
+		|| asn1_length_is_zero(dlen) != 1) {
 		error_print();
 		return -1;
 	}
-	if (version != CMS_version) {
+	if (*version != 1) {
 		error_print();
 		return -1;
 	}
 	return 1;
 }
 
-int cms_signed_data_print(FILE *fp, const uint8_t *a, size_t alen, int format, int indent)
+int cms_signed_data_print(FILE *fp, int fmt, int ind, const char *label, const uint8_t *d, size_t dlen)
 {
-	const uint8_t *data;
-	size_t datalen;
+	int ret, val;
+	const uint8_t *p;
+	size_t len;
 
-	int version;
-	int algor;
-	uint32_t nodes[32];
-	size_t nodes_count;
-	const uint8_t *certs;
-	size_t certslen;
-	const uint8_t *crls;
-	size_t crlslen;
-	const uint8_t *signer_infos;
-	size_t signer_infos_len;
+	format_print(fp, fmt, ind, "%s\n", label);
+	ind += 4;
 
-	if (asn1_sequence_from_der(&data, &datalen, &a, &alen) != 1) {
-		error_print();
-		return -1;
-	}
-
-	if (asn1_int_from_der(&version, &data, &datalen) != 1) goto bad;
-	format_print(fp, format, indent, "Version : %d\n", version);
-
-	if (x509_digest_algor_from_der(&algor, nodes, &nodes_count, &data, &datalen) != 1) goto bad;
-	format_print(fp, format, indent, "DigestAlgorithm : %s\n", x509_digest_algor_name(algor));
-
-	if (asn1_implicit_sequence_from_der(0, &certs, &certslen, &data, &datalen) < 0) goto bad;
-
-	if (asn1_implicit_sequence_from_der(1, &crls, &crlslen, &data, &datalen) < 0) goto bad;
-
-	if (asn1_sequence_from_der(&signer_infos, &signer_infos_len, &data, &datalen) != 1) goto bad;
-
-
-bad:
+	if (asn1_int_from_der(&val, &d, &dlen) != 1) goto err;
+	format_print(fp, fmt, ind, "version: %d\n", val);
+	if (asn1_set_from_der(&p, &len, &d, &dlen) != 1) goto err;
+	cms_digest_algors_print(fp, fmt, ind, "digestAlgorithms", p, len);
+	if (asn1_sequence_from_der(&p, &len, &d, &dlen) != 1) goto err;
+	cms_content_info_print(fp, fmt, ind, "contentInfo", p, len);
+	if ((ret = asn1_implicit_set_from_der(0, &p, &len, &d, &dlen)) < 0) goto err;
+	if (ret) cms_extended_certs_print(fp, fmt, ind, "certificates", p, len);
+	if ((ret = asn1_implicit_set_from_der(1, &p, &len, &d, &dlen)) < 0) goto err;
+	if (asn1_set_from_der(&p, &len, &d, &dlen) != 1) goto err;
+	cms_signer_infos_print(fp, fmt, ind, "signerInfos", p, len);
+	if (asn1_length_is_zero(dlen) != 1) goto err;
+	return 1;
+err:
 	error_print();
-
 	return -1;
 }
 
-int cms_signed_data_sign_to_der(const SM2_KEY *sign_keys,
-	const X509_CERTIFICATE *sign_certs, size_t sign_count,
+int cms_signed_data_sign_to_der(
+	int version,
 	int content_type, const uint8_t *content, size_t content_len,
-	const uint8_t **crls, size_t *crls_lens, size_t crls_count,
+	const CMS_CERT_AND_KEY *signers, size_t signers_cnt,
+	const uint8_t *crls, size_t crls_len,
 	uint8_t **out, size_t *outlen)
 {
-	uint8_t *p;
+	return -1;
+}
+
+int cms_signed_data_verify_from_der(
+	int *version,
+	const uint8_t *digest_algors, size_t *digest_algors_cnt, size_t max_digest_algors,
+	int *content_type, const uint8_t **content, size_t *content_len,
+	const uint8_t **certs, size_t *certs_len,
+	const uint8_t **crls, size_t *crls_len,
+	const uint8_t **signer_infos, size_t *signer_infos_len,
+	const uint8_t *extra_certs, size_t extra_certs_len,
+	const uint8_t *extra_crls, size_t extra_crls_len,
+	const uint8_t **in, size_t *inlen)
+{
+	return -1;
+}
+
+int cms_recipient_info_to_der(
+	int version,
+	const uint8_t *issuer, size_t issuer_len,
+	const uint8_t *serial_number, size_t serial_number_len,
+	int public_key_enc_algor,
+	const uint8_t *enced_key, size_t enced_key_len,
+	uint8_t **out, size_t *outlen)
+{
 	size_t len = 0;
-	uint8_t digest_algors[16];
-	size_t digest_algors_len = 0;
-	size_t sign_certs_len = 0;
-	size_t certs_len = 0;
-	size_t crls_len = 0;
-	size_t signer_infos_len = 0;
-	uint8_t sigs[sign_count][SM2_MAX_SIGNATURE_SIZE];
-	size_t siglens[sign_count];
-	int i;
-
-	p = digest_algors;
-	x509_digest_algor_to_der(OID_sm3, &p, &digest_algors_len);
-	for (i = 0; i < sign_count; i++) {
-		if (x509_certificate_to_der(&sign_certs[i], NULL, &sign_certs_len) != 1) {
-			error_print();
-			return -1;
-		}
-	}
-	for (i = 0; i < crls_count; i++) {
-		crls_len += crls_lens[i];
-	}
-
-	for (i = 0; i < sign_count; i++) {
-		const X509_CERTIFICATE *cert = &sign_certs[i];
-		const X509_NAME *issuer = &cert->tbs_certificate.issuer;
-		const uint8_t *serial_number = cert->tbs_certificate.serial_number;
-		size_t serial_number_len = cert->tbs_certificate.serial_number_len;
-
-		SM2_SIGN_CTX sign_ctx;
-		sm2_sign_init(&sign_ctx, &sign_keys[i], SM2_DEFAULT_ID);
-		sm2_sign_update(&sign_ctx, content, content_len);
-		sm2_sign_finish(&sign_ctx, sigs[i], &siglens[i]);
-
-		if (cms_signer_info_to_der(issuer, serial_number, serial_number_len,
-			OID_sm3, NULL, 0, sigs[i], siglens[i], NULL, 0,
-			NULL, &signer_infos_len) != 1) {
-			error_print();
-			return -1;
-		}
-	}
-
-	len = 0;
-	if (asn1_int_to_der(CMS_version, NULL, &len) != 1
-		|| asn1_set_to_der(digest_algors, digest_algors_len, NULL, &len) != 1
-		|| cms_content_info_to_der(content_type, content, content_len, NULL, &len) != 1
-		|| asn1_implicit_set_to_der(0, NULL, certs_len, NULL, &len) < 0
-		|| asn1_implicit_set_to_der(1, NULL, crls_len, NULL, &len) < 0
-		|| asn1_set_to_der(NULL, signer_infos_len, NULL, &len) != 1) {
+	if (version != 1) {
 		error_print();
 		return -1;
 	}
-
-
-	if (asn1_sequence_header_to_der(len, out, outlen) != 1
-		|| asn1_int_to_der(CMS_version, out, outlen) != 1
-		|| asn1_set_to_der(digest_algors, digest_algors_len, out, outlen) != 1
-		|| cms_content_info_to_der(content_type, content, content_len, out, outlen) != 1
-		|| asn1_implicit_set_header_to_der(0, certs_len, out, outlen) != 1) {
+	if (asn1_int_to_der(version, NULL, &len) != 1
+		|| cms_issuer_and_serial_number_to_der(issuer, issuer_len,
+			serial_number, serial_number_len, NULL, &len) != 1
+		|| x509_public_key_encryption_algor_to_der(public_key_enc_algor, NULL, &len) != 1
+		|| asn1_octet_string_to_der(enced_key, enced_key_len, NULL, &len) != 1
+		|| asn1_sequence_header_to_der(len, out, outlen) != 1
+		|| asn1_int_to_der(version, out, outlen) != 1
+		|| cms_issuer_and_serial_number_to_der(issuer, issuer_len,
+			serial_number, serial_number_len, out, outlen) != 1
+		|| x509_public_key_encryption_algor_to_der(public_key_enc_algor, out, outlen) != 1
+		|| asn1_octet_string_to_der(enced_key, enced_key_len, out, outlen) != 1) {
 		error_print();
 		return -1;
 	}
-	for (i = 0; i < sign_count; i++) {
-		if (x509_certificate_to_der(&sign_certs[i], out, outlen) != 1) {
-			error_print();
-			return -1;
-		}
-	}
-	if (crls) {
-		if (asn1_implicit_set_header_to_der(1, crls_len, out, outlen) != 1) {
-			error_print();
-			return -1;
-		}
-		for (i = 0; i < crls_count; i++) {
-			asn1_data_to_der(crls[i], crls_lens[i], out, outlen);
-		}
-	}
-	asn1_set_header_to_der(signer_infos_len, out, outlen);
-	for (i = 0; i < sign_count; i++) {
-		const X509_CERTIFICATE *cert = &sign_certs[i];
-		const X509_NAME *issuer = &cert->tbs_certificate.issuer;
-		const uint8_t *serial_number = cert->tbs_certificate.serial_number;
-		size_t serial_number_len = cert->tbs_certificate.serial_number_len;
-
-		if (cms_signer_info_to_der(issuer, serial_number, serial_number_len,
-			OID_sm3, NULL, 0, sigs[i], siglens[i], NULL, 0, out, outlen) != 1) {
-			error_print();
-			return -1;
-		}
-	}
-
 	return 1;
 }
 
-int cms_signed_data_verify_from_der(const uint8_t *signed_data, size_t signed_data_len)
+int cms_recipient_info_from_der(
+	int *version,
+	const uint8_t **issuer, size_t *issuer_len,
+	const uint8_t **serial_number, size_t *serial_number_len,
+	int *pke_algor, const uint8_t **params, size_t *params_len,// SM2加密只使用SM3，没有默认参数，但是ECIES可能有
+	const uint8_t **enced_key, size_t *enced_key_len,
+	const uint8_t **in, size_t *inlen)
 {
-	int version;
-	int content_type;
-	const uint8_t *digest_algors;
-	const uint8_t *content;
-	const uint8_t *certs;
-	const uint8_t *crls;
-	const uint8_t *signer_infos;
-	size_t digest_algors_len;
-	size_t content_len;
-	size_t certs_len;
-	size_t crls_len;
-	size_t signer_infos_len;
+	int ret;
+	const uint8_t *d;
+	size_t dlen;
 
-	/*
-	if (asn1_sequence_from_der(&data, &datalen, &signed_data, &signed_data_len) != 1
-		|| signed_data_len > 0) {
+	if ((ret = asn1_sequence_from_der(&d, &dlen, in, inlen)) != 1) {
+		if (ret < 0) error_print();
+		return ret;
+	}
+	if (asn1_int_from_der(version, &d, &dlen) != 1
+		|| cms_issuer_and_serial_number_from_der(issuer, issuer_len,
+			serial_number, serial_number_len, &d, &dlen) != 1
+		|| x509_public_key_encryption_algor_from_der(pke_algor, params, params_len, &d, &dlen) != 1
+		|| asn1_octet_string_from_der(enced_key, enced_key_len, &d, &dlen) != 1
+		|| asn1_length_is_zero(dlen) != 1) {
 		error_print();
 		return -1;
 	}
-	if (asn1_int_from_der(&version, &data, &datalen) != 1
-		|| asn1_set_from_der(&digest_algors, &digest_algors_len, &data, &datalen) != 1
-		|| cms_content_info_from_der(&content_type, &content, &content_len, &data, &datalen) != 1
-		|| asn1_implicit_set_from_der(0, &certs, &certs_len, &data, &datalen) < 0
-		|| asn1_implicit_set_from_der(1, &crls, &crls_len, &data, &datalen) < 0
-		|| asn1_set_from_der(&signer_infos, &signer_infos_len, &data, &datalen) != 1) {
+	if (*version != 1) {
 		error_print();
 		return -1;
 	}
-
-	len = signer_infos_len;
-
-	while (len > 0) {
-		cms_signer_info_from_der();
-
-
-		cms_signer_info_match();
-
-		cms_signer_info_verify();
-
+	if (*pke_algor != OID_sm2encrypt) {
+		error_print();
+		return -1;
 	}
-	*/
+	if (*params || *params_len) {
+		error_print();
+		return -1;
+	}
+	return 1;
+}
 
+int cms_recipient_info_print(FILE *fp, int fmt, int ind, const char *label, const uint8_t *d, size_t dlen)
+{
+	int val;
+	const uint8_t *p;
+	size_t len;
+
+	format_print(fp, fmt, ind, "%s\n", label);
+	ind += 4;
+
+	if (asn1_int_from_der(&val, &d, &dlen) != 1) goto err;
+	format_print(fp, fmt, ind, "version: %d\n", val);
+	if (asn1_sequence_from_der(&p, &len, &d, &dlen) != 1) goto err;
+	cms_issuer_and_serial_number_print(fp, fmt, ind, "issuerAndSerialNumber", p, len);
+	if (asn1_sequence_from_der(&p, &len, &d, &dlen) != 1) goto err;
+	x509_public_key_encryption_algor_print(fp, fmt, ind, "keyEncryptionAlgorithm", p, len);
+	if (asn1_octet_string_from_der(&p, &len, &d, &dlen) != 1) goto err;
+	format_bytes(fp, fmt, ind, "encryptedKey", d, dlen);
+	if (asn1_length_is_zero(dlen) != 1) goto err;
+	return 1;
+err:
+	error_print();
 	return -1;
 }
 
-
-
-
-/*
-
-
-SignedAndEnvelopedData ::= SEQUENCE {
-	version			INTEGER (1),
-	recipientInfos		SET OF RecipientInfo,
-	digestAlgorithms	SET OF AlgorithmIdentifier,
-	encryptedContentInfo	EncryptedContentInfo,
-	certificates		[0] IMPLICIT SET OF Certificate OPTIONAL,
-	crls			[1] IMPLICIT SET OF CertificateRevocationList OPTIONAL,
-	signerInfos		SET OF SignerInfo
+int cms_recipient_info_encrypt_to_der(
+	int version,
+	const uint8_t *issuer, size_t issuer_len,
+	const uint8_t *serial_number, size_t serial_number_len,
+	int public_key_enc_algor,
+	const uint8_t *in, size_t inlen,
+	const SM2_KEY *public_key,
+	uint8_t **out, size_t *outlen)
+{
+	return 1;
 }
- */
 
+int cms_recipient_info_decrypt_from_der(
+	int *version,
+	const uint8_t **issuer, size_t *issuer_len,
+	const uint8_t **serial_number, size_t *serial_number_len,
+	int *pke_algor, const uint8_t **params, size_t *paramslen,
+	const uint8_t **decrypted_key, size_t *decrypted_key_len,
+	const SM2_KEY *sm2_key,
+	const uint8_t **in, size_t *inlen)
+{
+	return 1;
+}
 
-int cms_signed_and_enveloped_data_to_der(void)
+int cms_enveloped_data_to_der(
+	int version,
+	const uint8_t *rcpt_infos, size_t rcpt_infos_len,
+	int content_type,
+	int enc_algor, const uint8_t *enc_iv, size_t enc_iv_len,
+	const uint8_t *enced_content, size_t enced_content_len,
+	const uint8_t *shared_info1, size_t shared_info1_len,
+	const uint8_t *shared_info2, size_t shared_info2_len,
+	uint8_t **out, size_t *outlen)
+{
+	size_t len = 0;
+	if (asn1_int_to_der(version, NULL, &len) != 1
+		|| asn1_set_to_der(rcpt_infos, rcpt_infos_len, NULL, &len) != 1
+		|| cms_enced_content_info_to_der(content_type,
+			enc_algor, enc_iv, enc_iv_len,
+			enced_content, enced_content_len,
+			shared_info1, shared_info1_len,
+			shared_info2, shared_info2_len,
+			NULL, &len) != 1
+		|| asn1_sequence_header_to_der(len, out, outlen) != 1
+		|| asn1_int_to_der(version, out, outlen) != 1
+		|| asn1_set_to_der(rcpt_infos, rcpt_infos_len, out, outlen) != 1
+		|| cms_enced_content_info_to_der(content_type,
+			enc_algor, enc_iv, enc_iv_len,
+			enced_content, enced_content_len,
+			shared_info1, shared_info1_len,
+			shared_info2, shared_info2_len,
+			out, outlen) != 1) {
+		error_print();
+		return -1;
+	}
+	return 1;
+}
+
+int cms_enveloped_data_from_der(
+	int *version,
+	const uint8_t **rcpt_infos, size_t *rcpt_infos_len,
+	int *content_type,
+	int *enc_algor, const uint8_t **enc_iv, size_t *enc_iv_len,
+	const uint8_t **enced_content, size_t *enced_content_len,
+	const uint8_t **shared_info1, size_t *shared_info1_len,
+	const uint8_t **shared_info2, size_t *shared_info2_len,
+	const uint8_t **in, size_t *inlen)
 {
 	return -1;
 }
 
-int cms_signed_and_enveloped_data_from_der(void)
+int cms_enveloped_data_print(FILE *fp, int fmt, int ind, const char *label, const uint8_t *d, size_t dlen)
 {
 	return -1;
 }
 
-int cms_signed_and_enveloped_data_print(void)
-{
-	return -1;
-}
-
-int cms_signed_and_enveloped_data_sign_encrypt_to_der(
-	const int *digest_algors, const size_t digset_algors_count,
-	const X509_CERTIFICATE *sign_certs, size_t sign_count,
-	const uint8_t **crls, const size_t *crls_lens, const size_t crls_count,
-	const uint8_t **signer_infos, size_t *signer_infos_lens, size_t signer_infos_count,
-	const X509_CERTIFICATE *rcpt_certs, size_t rcpt_count,
+int cms_enveloped_data_encrypt_to_der(
+	int version,
+	const uint8_t *rcpt_certs, size_t rcpt_certs_len, // 当只有一个接收者的时候，这个参数类型非常方便
+	int enc_algor, const uint8_t *key, size_t keylen, const uint8_t *iv, size_t ivlen,
 	int content_type, const uint8_t *content, size_t content_len,
 	const uint8_t *shared_info1, size_t shared_info1_len,
 	const uint8_t *shared_info2, size_t shared_info2_len,
 	uint8_t **out, size_t *outlen)
 {
-/*
-	size_t len = 0;
-	SM4_KEY sm4_key;
-	uint8_t enc_key[16];
-	uint8_t enc_iv[16];
-	uint8_t enced_key[rcpt_count][256 + 16];
-	uint8_t enced_content_info[content_len + 512];
-	size_t enced_content_info_len;
-
-	rand_bytes(enc_key, 16);
-	rand_bytes(enc_iv, 16);
-
-	size_t i;
-	for (i = 0; i < rcpt_count; i++) {
-		const SM2_KEY *sm2_key = x509_certificate_get_public_key(rcpt_certs[i]);
-		sm2_encrypt(sm2_key, enc_key, 16, enced_key[i], enced_key_len[i]);
-	}
-
-	for (i = 0; i < rcpt_count; i++) {
-		x509_certificate_get_recipient_info(rcpt_cert,
-			&issuer,
-			&serial_number, &serial_number_len,
-			&sm2_key);
-
-		cms_recipient_info_encrypt_to_der(issuer,
-			serial_number, serial_number_len,
-			enced_key, enced_key_len,
-			NULL, &rcpt_infos_len);
-	}
-
-	if (asn1_int_to_der(CMS_version, NULL, &len) != 1
-		|| asn1_set_to_der(NULL, rcpt_infos_len, NULL, &len) != 1
-		|| cms_enced_content_info_encrypt_to_der(&sm4_key, enc_iv,
-			content_type, content, content_len,
-			shared_info1, shared_info1_len,
-			shared_info2, shared_info2_len,
-			NULL, &len) != 1) {
-		error_print();
-		return -1;
-	}
-
-	if (asn1_sequence_header_to_der(len, out, outlen) != 1
-		|| asn1_int_to_der(CMS_version, out, outlen) != 1
-		|| asn1_set_header_to_der(rcpt_infos_len, out, outlen) != 1) {
-		error_print();
-		return -1;
-	}
-	for (i = 0; i < rcpt_count; i++) {
-		if (cms_recipient_info_encrypt_to_der(&sm2_key, issuer,
-			serial_number, serial_number_len,
-			enc_key, sizeof(enc_key), out, outlen) != 1) {
-			error_print();
-			return -1;
-		}
-	}
-	if (cms_enced_content_info_encrypt_to_der(&sm4_key, enc_iv,
-		content_type, content, content_len,
-		shared_info1, shared_info1_len,
-		shared_info2, shared_info2_len,
-		out, &outlen) != 1) {
-		error_print();
-		return -1;
-	}
-*/
-	return 1;
+	return -1;
 }
 
-int cms_signed_and_enveloped_data_decrypt_verify_from_der()
+int cms_enveloped_data_decrypt_from_der(
+	int *version,
+	const uint8_t **rcpt_infos, size_t *rcpt_infos_len,
+	int *content_type, uint8_t *content, size_t *content_len,
+	const uint8_t **shared_info1, size_t *shared_info1_len,
+	const uint8_t **shared_info2, size_t *shared_info2_len,
+	const SM2_KEY *sm2_key,
+	const uint8_t *issuer, size_t issuer_len,
+	const uint8_t *serial_number, size_t serial_number_len,
+	const uint8_t **in, size_t *inlen)
 {
 	return -1;
 }
 
-
-
-int cms_content_info_print(FILE *fp, const uint8_t *a, size_t alen, int format, int indent)
+int cms_signed_and_enveloped_data_to_der(
+	int version,
+	const uint8_t *rcpt_infos, size_t rcpt_infos_len,
+	const int *digest_algors, size_t digest_algors_cnt,
+	int content_type,
+	int enc_algor, const uint8_t *iv, size_t ivlen,
+	const uint8_t *enced_content, size_t enced_content_len,
+	const uint8_t *shared_info1, size_t shared_info1_len,
+	const uint8_t *shared_info2, size_t shared_info2_len,
+	const uint8_t *certs, size_t certs_len,
+	const uint8_t *crls, size_t crls_len,
+	const uint8_t *signer_infos, size_t signer_infos_len,
+	uint8_t **out, size_t *outlen)
 {
-	int ret;
-	int oid;
-	const uint8_t *data;
-	size_t datalen;
-	uint32_t nodes[32];
-	size_t nodes_count;
-	const uint8_t *content;
-	size_t content_len;
-
-	format_print(fp, format, indent, "ContentInfo:\n");
-	indent += 4;
-	if ((ret = asn1_sequence_from_der(&data, &datalen, &a, &alen)) != 1) {
+	size_t len = 0;
+	if (asn1_int_to_der(version, NULL, &len) != 1
+		|| asn1_set_to_der(rcpt_infos, rcpt_infos_len, NULL, &len) != 1
+		|| cms_digest_algors_to_der(digest_algors, digest_algors_cnt, NULL, &len) != 1
+		|| cms_enced_content_info_to_der(content_type,
+			enc_algor, iv, ivlen,
+			enced_content, enced_content_len,
+			shared_info1, shared_info1_len,
+			shared_info2, shared_info2_len,
+			NULL, &len) != 1
+		|| asn1_implicit_set_to_der(0, certs, certs_len, NULL, &len) < 0
+		|| asn1_implicit_set_to_der(1, crls, crls_len, NULL, &len) < 0
+		|| asn1_set_to_der(signer_infos, signer_infos_len, NULL, &len) != 1
+		|| asn1_sequence_header_to_der(len, out, outlen) != 1
+		|| asn1_int_to_der(version, out, outlen) != 1
+		|| asn1_set_to_der(rcpt_infos, rcpt_infos_len, out, outlen) != 1
+		|| cms_digest_algors_to_der(digest_algors, digest_algors_cnt, out, outlen) != 1
+		|| cms_enced_content_info_to_der(content_type,
+			enc_algor, iv, ivlen,
+			enced_content, enced_content_len,
+			shared_info1, shared_info1_len,
+			shared_info2, shared_info2_len,
+			out, outlen) != 1
+		|| asn1_implicit_set_to_der(0, certs, certs_len, out, outlen) < 0
+		|| asn1_implicit_set_to_der(1, crls, crls_len, out, outlen) < 0
+		|| asn1_set_to_der(signer_infos, signer_infos_len, out, outlen) != 1) {
 		error_print();
 		return -1;
 	}
+	return 1;
+}
 
-	if (cms_content_type_from_der(&oid, &data, &datalen) != 1) goto bad;
-	format_print(fp, format, indent, "Type : %s\n", cms_content_type_name(oid));
-	if (asn1_explicit_from_der(0, &content, &content_len, &data, &datalen) != 1) goto bad;
+int cms_signed_and_enveloped_data_from_der(
+	int *version,
+	const uint8_t **rcpt_infos, size_t *rcpt_infos_len,
+	int *digest_algors, size_t *digest_algors_cnt, size_t max_digest_algors,
+	int *content_type,
+	int *enc_algor, const uint8_t **enc_iv, size_t *enc_iv_len,
+	const uint8_t **enced_content, size_t *enced_content_len,
+	const uint8_t **shared_info1, size_t *shared_info1_len,
+	const uint8_t **shared_info2, size_t *shared_info2_len,
+	const uint8_t **certs, size_t *certs_len,
+	const uint8_t **crls, size_t *crls_len,
+	const uint8_t **signer_infos, size_t *signer_infos_len,
+	const uint8_t **in, size_t *inlen)
+{
+	int ret;
+	const uint8_t *d;
+	size_t dlen;
 
-	switch (oid) {
-	case CMS_data: return cms_data_print(fp, content, content_len, format, indent);
-	case CMS_signed_data: return cms_signed_data_print(fp, content, content_len, format, indent);
-	case CMS_enveloped_data: break;
-	case CMS_signed_and_enveloped_data: break;
-	case CMS_encrypted_data: return cms_encrypted_data_print(fp, content, content_len, format, indent);
-	case CMS_key_agreement_info:
-		break;
+	if ((ret = asn1_sequence_from_der(&d, &dlen, in, inlen)) != 1) {
+		if (ret < 0) error_print();
+		return ret;
+	}
+	if (asn1_int_from_der(version, &d, &dlen) != 1
+		|| asn1_set_from_der(rcpt_infos, rcpt_infos_len, &d, &dlen) != 1
+		|| cms_digest_algors_from_der(digest_algors, digest_algors_cnt, max_digest_algors, &d, &dlen) != 1
+		|| cms_enced_content_info_from_der(content_type,
+			enc_algor, enc_iv, enc_iv_len,
+			enced_content, enced_content_len,
+			shared_info1, shared_info1_len,
+			shared_info2, shared_info2_len,
+			&d, &dlen) != 1
+		|| asn1_implicit_set_from_der(0, certs, certs_len, &d, &dlen) < 0
+		|| asn1_implicit_set_from_der(1, crls, crls_len, &d, &dlen) < 0
+		|| asn1_set_from_der(signer_infos, signer_infos_len, &d, &dlen) != 1
+		|| asn1_length_is_zero(dlen) != 1) {
+		error_print();
+		return -1;
 	}
 	return 1;
+}
 
-bad:
+int cms_signed_and_enveloped_data_print(FILE *fp, int fmt, int ind, const char *label, const uint8_t *d, size_t dlen)
+{
+	return -1;
+}
+
+int cms_signed_and_enveloped_encipher_to_der(
+	const CMS_CERT_AND_KEY *signers, size_t signers_cnt,
+	const uint8_t *rcpt_certs, size_t rcpt_certs_len,
+	int content_type, const uint8_t *content, size_t content_len,
+	const uint8_t *signer_crls, size_t signer_crls_len,
+	const uint8_t *shared_info1, size_t shared_info1_len,
+	const uint8_t *shared_info2, size_t shared_info2_len,
+	uint8_t **out, size_t *outlen)
+{
+	return 0;
+}
+
+int cms_deenvelop_and_verify_decipher_from_der(
+	int *version,
+	const uint8_t **rcpt_infos, size_t *rcpt_infos_len,
+	const uint8_t **digest_algors, size_t *digest_algors_len,
+	int *enc_algor, uint8_t *key, size_t *keylen, const uint8_t **iv, size_t *ivlen,
+	int *content_type, uint8_t *content, size_t *content_len,
+	const uint8_t **enced_content, size_t *enced_content_len,
+	const uint8_t **shared_info1, size_t *shared_info1_len,
+	const uint8_t **shared_info2, size_t *shared_info2_len,
+	const uint8_t **certs, size_t *certs_len,
+	const uint8_t **crls, size_t *crls_len,
+	const uint8_t **signer_infos, size_t *signer_infos_len,
+
+	const SM2_KEY *rcpt_key,
+	const uint8_t *rcpt_issuer, size_t rcpt_issuer_len,
+	const uint8_t *rcpt_serial_number, size_t rcpt_serial_number_len,
+	const uint8_t *extra_verify_certs, size_t extra_verify_certs_len,
+	const uint8_t *extra_verify_crls, size_t extra_verify_crls_len,
+
+	const uint8_t **in, size_t *inlen)
+{
+	return 0;
+}
+
+int cms_key_agreement_info_to_der(
+	int version,
+	const SM2_KEY *temp_public_key_r,
+	const uint8_t *user_cert, size_t user_cert_len,
+	const uint8_t *user_id, size_t user_id_len,
+	uint8_t **out, size_t *outlen)
+{
+	size_t len = 0;
+	if (asn1_int_to_der(version, NULL, &len) != 1
+		|| sm2_public_key_info_to_der(temp_public_key_r, NULL, &len) != 1
+		|| x509_cert_to_der(user_cert, user_cert_len, NULL, &len) != 1
+		|| asn1_octet_string_to_der(user_id, user_id_len, NULL, &len) != 1
+		|| asn1_sequence_header_to_der(len, out, outlen) != 1
+		|| asn1_int_to_der(version, out, outlen) != 1
+		|| sm2_public_key_info_to_der(temp_public_key_r, out, outlen) != 1
+		|| x509_cert_to_der(user_cert, user_cert_len, out, outlen) != 1
+		|| asn1_octet_string_to_der(user_id, user_id_len, out, outlen) != 1) {
+		error_print();
+		return -1;
+	}
+	return 1;
+}
+
+int cms_key_agreement_info_from_der(
+	int *version,
+	SM2_KEY *temp_public_key_r,
+	const uint8_t **user_cert, size_t *user_cert_len,
+	const uint8_t **user_id, size_t *user_id_len,
+	const uint8_t **in, size_t *inlen)
+{
+	int ret;
+	const uint8_t *d;
+	size_t dlen;
+
+	if ((ret = asn1_sequence_from_der(&d, &dlen, in, inlen)) != 1) {
+		if (ret < 0) error_print();
+		return ret;
+	}
+	if (asn1_int_from_der(version, &d, &dlen) != 1
+		|| sm2_public_key_info_from_der(temp_public_key_r, &d, &dlen) != 1
+		|| x509_cert_from_der(user_cert, user_cert_len, &d, &dlen) != 1
+		|| asn1_octet_string_from_der(user_id, user_id_len, &d, &dlen) != 1
+		|| asn1_length_is_zero(dlen) != 1) {
+		error_print();
+		return -1;
+	}
+	return 1;
+}
+
+int cms_key_agreement_info_print(FILE *fp, int fmt, int ind, const char *label, const uint8_t *d, size_t dlen)
+{
+	int val;
+	SM2_KEY pub_key;
+	const uint8_t *p;
+	size_t len;
+
+	format_print(fp, fmt, ind, "%s\n", label);
+	ind += 4;
+
+	if (asn1_int_from_der(&val, &d, &dlen) != 1) goto err;
+	format_print(fp, fmt, ind, "version: %d\n", val);
+	if (sm2_public_key_info_from_der(&pub_key, &d, &dlen) != 1) goto err;
+	//sm2_public_key_info_print(fp, fmt, ind, "tempPublicKeyR", &pub_key);
+	if (x509_cert_from_der(&p, &len, &d, &dlen) != 1) goto err;
+	x509_cert_print(fp, fmt, ind, p, len);
+	if (asn1_octet_string_from_der(&p, &len, &d, &dlen) != 1) goto err;
+	format_bytes(fp, fmt, ind, "userID", p, len);
+	if (asn1_length_is_zero(dlen) != 1) goto err;
+	return 1;
+err:
 	error_print();
 	return -1;
 }
 
-// 下面的函数生成的都是ContentInfo
-
-
-// EncryptedData
-int cms_encrypt(const uint8_t key[16], const uint8_t *in, size_t inlen,
-	uint8_t *out, size_t *outlen)
+// 是否要提供一个返回长度的功能？此时不返回错误？			
+int cms_set_data(uint8_t *cms, size_t *cmslen, size_t maxlen, const uint8_t *d, size_t dlen)
 {
-	SM4_KEY sm4_key;
-	uint8_t iv[16];
-	int content_type = CMS_data;
-
-	sm4_set_encrypt_key(&sm4_key, key);
-	rand_bytes(iv, sizeof(iv));
-
-	if (cms_encrypted_data_encrypt_to_der(&sm4_key, iv,
-		content_type, in, inlen, NULL, 0, NULL, 0,
-		&out, outlen) != 1) {
+	size_t len = 0;
+	*cmslen = 0;
+	if (cms_content_info_to_der(OID_cms_data, d, dlen, NULL, &len) != 1
+		|| asn1_length_le(len, maxlen) != 1
+		|| cms_content_info_to_der(OID_cms_data, d, dlen, &cms, cmslen) != 1) {
 		error_print();
 		return -1;
 	}
-
 	return 1;
 }
 
-int cms_decrypt(const uint8_t key[16], const uint8_t *in, size_t inlen,
-	int *content_type, uint8_t *out, size_t *outlen,
+int cms_encrypt(
+	int enc_algor, const uint8_t *key, size_t keylen, const uint8_t *iv, size_t ivlen, // 对称加密算法、密钥和IV
+	int content_type, const uint8_t *content, size_t content_len, // 待加密的输入数据
+	const uint8_t *shared_info1, size_t shared_info1_len, // 附加信息
+	const uint8_t *shared_info2, size_t shared_info2_len, // 附加信息
+	uint8_t *cms, size_t *cmslen, size_t maxlen)
+{
+	return -1;
+}
+
+int cms_decrypt(
+	const uint8_t *key, size_t keylen, // 解密密钥（我们不知道解密算法）
+	const uint8_t *cms, size_t cms_len, // 输入的ContentInfo (type encryptedData)
+	const uint8_t *extra_enced_content, size_t extra_enced_content_len, // EncryptedContentInfo的密文数据为空时显示提供输入密文
+	int *content_type, uint8_t *content, size_t *content_len, // 输出的解密数据类型及数据
+	int *enc_algor, const uint8_t **iv, size_t *ivlen, // 解析EncryptedContentInfo得到的对称加密算法及参数
+	const uint8_t **shared_info1, size_t *shared_info1_len, // 附加信息
+	const uint8_t **shared_info2, size_t *shared_info2_len)
+{
+	return -1;
+}
+
+int cms_sign(
+	const CMS_CERT_AND_KEY *signers, size_t signers_cnt, // 签名者的签名私钥和证书
+	int content_type, const uint8_t *content, size_t content_len, // 待签名的输入数据
+	const uint8_t *crls, size_t crls_len, // 签名者证书的CRL
+	uint8_t *cms, size_t *cms_len) // 输出的ContentInfo (type signedData
+{
+	return -1;
+}
+
+int cms_verify(
+	const uint8_t *cms, size_t cms_len, // 输入的ContentInfo (type signedData)
+	const uint8_t *extra_content, size_t extra_content_len, // ContentInfo的数据为空时显示提供输入
+	const uint8_t *extra_certs, size_t extra_certs_len, // 当SignedData中未提供证书时显示输入
+	const uint8_t *extra_crls, size_t extra_crls_len, // 当SignedData中未提供CRL时显示输入
+	int *content_type, const uint8_t **content, size_t *content_len, // 从SignedData解析得到的被签名数据
+	const uint8_t **certs, size_t *certs_len, // 从SignedData解析得到的签名证书
+	const uint8_t **crls, size_t *crls_len, // 从SignedData解析得到的CRL
+	const uint8_t **signer_infos, size_t *signer_infos_len) // 从SignedData解析得到的SignerInfos，可用于显示验证结果
+{
+	return -1;
+}
+
+
+int cms_envelop(
+	const uint8_t *rcpt_certs, size_t rcpt_certs_len, // 接收方证书，注意这个参数的类型可以容纳多个证书，但是只有在一个接受者时对调用方最方便
+	int enc_algor, const uint8_t *key, size_t keylen, const uint8_t *iv, size_t ivlen, // 对称加密算法及参数
+	int content_type, const uint8_t *content, size_t content_len, // 待加密的输入数据
+	const uint8_t *shared_info1, size_t shared_info1_len, // 附加输入信息
+	const uint8_t *shared_info2, size_t shared_info2_len, // 附加输入信息
+	uint8_t *cms, size_t *cms_len) // 输出ContentInfo
+{
+	return -1;
+}
+
+int cms_deenvelop(
+	const SM2_KEY *rcpt_key, const uint8_t *rcpt_cert, size_t rcpt_cert_len, // 接收方的解密私钥和对应的证书，注意只需要一个解密方
+	const uint8_t *cms, size_t cms_len,
+	const uint8_t *extra_enced_content, size_t extra_enced_content_len, // 显式输入的密文
+	int *content_type, uint8_t *content, size_t *content_len,
+	int *enc_algor, const uint8_t **iv, size_t *ivlen, // 注意，对称加密的密钥就不输出了
+	const uint8_t **rcpt_infos, size_t *rcpt_infos_len, // 解析得到，用于显示
 	const uint8_t **shared_info1, size_t *shared_info1_len,
 	const uint8_t **shared_info2, size_t *shared_info2_len)
 {
-	SM4_KEY sm4_key;
-
-	sm4_set_decrypt_key(&sm4_key, key);
-	if (cms_encrypted_data_decrypt_from_der(&sm4_key,
-		content_type, out, outlen,
-		shared_info1, shared_info1_len,
-		shared_info2, shared_info2_len,
-		&in, &inlen) != 1) {
-		error_print();
-		return -1;
-	}
-	if (inlen) {
-		error_print();
-		return 0;
-	}
-	return 1;
+	return -1;
 }
 
-
-// EnvelopedData
-int cms_seal(const X509_CERTIFICATE *rcpt_certs, size_t rcpt_count,
+int cms_sign_and_envelop( // 参考cms_sign, cms_envelop
+	const CMS_CERT_AND_KEY *signers, size_t signers_cnt,
+	const uint8_t *rcpt_certs, size_t rcpt_certs_len,
+	int enc_algor, const uint8_t *key, size_t keylen, const uint8_t *iv, size_t ivlen,
 	int content_type, const uint8_t *content, size_t content_len,
+	const uint8_t *signer_crls, size_t signer_crls_len,
 	const uint8_t *shared_info1, size_t shared_info1_len,
 	const uint8_t *shared_info2, size_t shared_info2_len,
-	uint8_t *out, size_t *outlen)
+	uint8_t *cms, size_t *cms_len)
 {
 	return -1;
 }
 
-int cms_open(const SM2_KEY *sm2_key, const X509_CERTIFICATE *cert,
-	const uint8_t *enveloped_data, size_t enveloped_data_len,
-	int *content_type, uint8_t *content, size_t *content_len)
+int cms_deenvelop_and_verify( // 参考cms_deenvelop, cms_verify
+	const SM2_KEY *rcpt_key, const uint8_t *rcpt_cert, size_t rcpt_cert_len,
+	// 输入
+	const uint8_t *cms, size_t cms_len,
+	const uint8_t *extra_enced_content, size_t extra_enced_content_len,
+	const uint8_t *extra_signer_certs, size_t extra_signer_certs_len,
+	const uint8_t *extra_signer_crls, size_t extra_signer_crls_len,
+	// 输出
+	int *content_type, uint8_t *content, size_t *content_len,
+	// 格外的解析内容输出，均为可选
+	int *enc_algor, const uint8_t **iv, size_t *ivlen,
+	const uint8_t **rcpt_infos, size_t rcpt_infos_len,
+	const uint8_t **signer_infos, size_t *signer_infos_len,
+	const uint8_t **signer_certs, size_t *signer_certs_len,
+	const uint8_t **signer_crls, size_t *signer_crls_len,
+	const uint8_t **shared_info1, size_t *shared_info1_len,
+	const uint8_t **shared_info2, size_t *shared_info2_len)
 {
 	return -1;
 }
 
-
-// SignedData
-int cms_sign(const SM2_KEY *sign_keys,
-	const X509_CERTIFICATE *sign_certs, size_t sign_count,
-	int content_type, const uint8_t *content, size_t content_len,
-	const uint8_t **crls, size_t *crls_lens, size_t crls_count,
-	uint8_t *content_info, size_t *content_info_len)
-{
-	size_t len = 0;
-	size_t signed_data_len = 0;
-
-	if (cms_signed_data_sign_to_der(sign_keys, sign_certs, sign_count,
-		content_type, content, content_len, crls, crls_lens, crls_count,
-		NULL, &signed_data_len) != 1) {
-		error_print();
-		return -1;
-	}
-	if (cms_content_type_to_der(CMS_signed_data, NULL, &len) != 1
-		|| asn1_explicit_to_der(0, NULL, signed_data_len, NULL, &len) != 1
-		|| asn1_sequence_header_to_der(len, &content_info, content_info_len) != 1
-		|| cms_content_type_to_der(CMS_signed_data, &content_info, content_info_len) != 1
-		|| asn1_explicit_header_to_der(0, signed_data_len, &content_info, content_info_len) != 1
-		|| cms_signed_data_sign_to_der(sign_keys, sign_certs, sign_count,
-			content_type, content, content_len, crls, crls_lens, crls_count,
-			&content_info, content_info_len) != 1) {
-		error_print();
-		return -1;
-	}
-	return 1;
-}
-
-int cms_verify(int *content_type, const uint8_t **content, size_t *content_len,
-	const uint8_t *content_info, size_t content_info_len)
+// 生成ContentInfo, type == keyAgreementInfo
+int cms_set_key_agreement_info(
+	uint8_t *cms, size_t *cms_len,
+	const SM2_KEY *temp_public_key_r,
+	const uint8_t *user_cert, size_t user_cert_len,
+	const uint8_t *user_id, size_t user_id_len)
 {
 	return -1;
 }
 
-
-
-
-
-
-
-
-
-// SignedAndEnvelopedData
-int cms_sign_and_seal(
-	const SM2_KEY *sign_keys, const X509_CERTIFICATE *sign_certs, size_t sign_count,
-	const uint8_t *crls, const size_t *crls_lens, const size_t crls_count,
-	const X509_CERTIFICATE *rcpt_certs, size_t rcpt_count,
-	int content_type, const uint8_t *content, size_t content_len,
-	const uint8_t *shared_info1, size_t shared_info1_len,
-	const uint8_t *shared_info2, size_t shared_info2_len,
-	uint8_t *out, size_t *outlen)
+int cms_print(FILE *fp, int fmt, int ind, const uint8_t *a, size_t alen)
 {
 	return -1;
 }
-
-int cms_open_and_verify()
-{
-	return -1;
-}
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
